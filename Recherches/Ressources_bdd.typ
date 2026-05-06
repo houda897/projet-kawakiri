@@ -170,6 +170,7 @@ Jeu de donnée regroupant: Personne en risque de pauvreté ou exclusion sociale,
 == Terrestrial protected area by designation type
 #link("https://data-explorer.oecd.org/vis?fs[0]=Topic%2C1%7CEnvironment%23ENV%23%7CBiodiversity%23ENV_BIO%23&pg=0&fc=Topic&bp=true&snb=3&df[ds]=dsDisseminateFinalDMZ&df[id]=DSD_PA%40DF_PROT_AREA&df[ag]=OECD.ENV.EPI&df[vs]=1.0&pd=%2C&dq=.A.TERRESTRIAL.PT_LAR.ALL_INC_P.TCEOA.CNTRY&to[TIME_PERIOD]=false")[#underline[[link]]]
 
+Proportion des zones protégés en fonction de pays.
 #bdd_table(
   [Format], [CSV],
   [Taille], [286K lignes (1Go)],
