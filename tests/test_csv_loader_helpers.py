@@ -7,11 +7,6 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-CODE_DIR = ROOT / "code"
-if str(CODE_DIR) not in sys.path:
-    sys.path.insert(0, str(CODE_DIR))
-
 from ingestion.csv_loader import (  # noqa: E402
     DetectedColumn,
     build_create_table_sql,

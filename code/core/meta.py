@@ -19,7 +19,6 @@ def ensure_meta_schema(client) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_runs
         (
-            run_id String,
             source_path String,
             target_database String,
             target_table String,
@@ -40,7 +39,6 @@ def ensure_meta_schema(client) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_sources
         (
-            run_id String,
             source_path String,
             target_database String,
             target_table String,
@@ -60,7 +58,6 @@ def ensure_meta_schema(client) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.detected_columns
         (
-            run_id String,
             target_database String,
             target_table String,
             column_name String,
@@ -69,7 +66,7 @@ def ensure_meta_schema(client) -> None:
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
-        ORDER BY (run_id, target_database, target_table, column_name)
+        ORDER BY (target_database, target_table, column_name)
         """
     )
 

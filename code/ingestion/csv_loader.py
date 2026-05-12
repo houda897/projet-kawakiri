@@ -12,6 +12,7 @@ from core.schema import q_ident
 
 NULL_TOKENS = {"", "null", "none", "nan", "na", "n/a"}
 DELIMITERS = [",", ";", "\t"]
+BATCH_SIZE = 10_000
 
 
 @dataclass
@@ -129,6 +130,34 @@ def import_csv_to_clickhouse(
 
     print(f"CSV importé avec succès : {row_count} lignes dans {database}.{table}")
     return asdict(result)
+
+def import_csv_folder_to_clickhouse(
+    client,
+    folder_path: str | Path,
+    database: str = CH_DB,
+    sample_size: int = 5000,
+) -> list[dict]:
+    folder = Path(folder_path)
+
+    if not folder.exists():
+        raise FileNotFoundError(f"Folder not found: {folder}")
+
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Expected a folder, got: {folder}")
+
+    results = []
+
+    for csv_file in sorted(folder.glob("*.csv")):
+        result = import_csv_to_clickhouse(
+            client=client,
+            csv_path=csv_file,
+            table_name=None,
+            database=database,
+            sample_size=sample_size,
+        )
+        results.append(result)
+
+    return results
 
 
 def detect_delimiter(path: Path) -> str:
@@ -284,6 +313,8 @@ def create_database(client, database: str) -> None:
 
 
 def create_table(client, database: str, table: str, columns: list[DetectedColumn]) -> None:
+    if not columns:
+        raise ValueError(f"Impossible de créer la table '{table}' : aucune colonne détectée.")
     client.command(build_create_table_sql(database, table, columns))
 
 
@@ -320,13 +351,16 @@ def insert_csv_rows(
     delimiter: str,
 ) -> int:
     """
-    Insert all CSV rows into the target ClickHouse table.
+    Insert all CSV rows into the target ClickHouse table using batch writes.
 
+    Rows are flushed every BATCH_SIZE records to avoid loading the entire
+    file into memory — critical for large oceanographic datasets.
     Each raw CSV value is cleaned and cast according to the inferred schema
     before insertion. Casting errors include the source line and column name.
     """
     column_names = [column.name for column in columns]
-    data = []
+    total_rows = 0
+    batch: list[list] = []
 
     with path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file, delimiter=delimiter)
@@ -335,19 +369,21 @@ def insert_csv_rows(
         for line_number, row in enumerate(reader, start=2):
             check_malformed_row(row, path, line_number, delimiter)
 
-            data.append([
+            batch.append([
                 cast_value(row.get(original_headers[index]), columns[index], line_number)
                 for index in range(len(columns))
             ])
 
-    if data:
-        client.insert(
-            f"{database}.{table}",
-            data,
-            column_names=column_names,
-        )
+            if len(batch) >= BATCH_SIZE:
+                client.insert(f"{database}.{table}", batch, column_names=column_names)
+                total_rows += len(batch)
+                batch = []
 
-    return len(data)
+    if batch:
+        client.insert(f"{database}.{table}", batch, column_names=column_names)
+        total_rows += len(batch)
+
+    return total_rows
 
 
 def log_ingestion_result(client, result: IngestionResult) -> None:
@@ -358,8 +394,6 @@ def log_ingestion_result(client, result: IngestionResult) -> None:
     row count, column count, status, and error message. This supports
     reproducibility and auditing of ingestion runs.
     """
-    ensure_meta_schema(client)
-
     client.insert(
         f"{META_DB}.ingestion_runs",
         [[
@@ -396,8 +430,6 @@ def log_detected_columns(
     The stored schema is used by downstream profiling and validation steps.
     Each row records a detected column name, inferred type, and nullability.
     """
-    ensure_meta_schema(client)
-
     rows = []
     for column in columns:
         rows.append([
@@ -428,8 +460,6 @@ def log_ingestion_source(client, result: IngestionResult, sample_check: dict) ->
     This table records whether the source passed the pre-ingestion validation
     or requires human review, together with the review reason.
     """
-    ensure_meta_schema(client)
-
     client.insert(
         f"{META_DB}.ingestion_sources",
         [[
