@@ -72,7 +72,9 @@ def compute_stats_for_column(client, run_ts, database, table, col):
       toUInt64(count()) AS distinct_est,
 
       -- ENTROPY
-      if(max(n) > 1, (-sum(p * log2(p))) / log2(max(n)), 0.0) AS entropy,
+      if(max(n) > 1, 
+        (-sum(p * log2(p))) / log2(max(n)), 
+        0.0) AS entropy,
 
       -- SPARSITY
       (SELECT if(total > 0, 1 - (non_null / total), 0) FROM base) AS sparsity,
