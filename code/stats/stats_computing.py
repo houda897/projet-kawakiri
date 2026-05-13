@@ -92,34 +92,46 @@ def compute_stats_for_column(client, run_ts, database, table, col):
     })
 
 def run_full_profiling(db_manager):
-        '''Find all the table of a database and loop the stats calculation on each one'''
+        '''
+        Find all the table of a database and loop the stats calculation on each one
+        Clear the table before inserting to make sure to not duplicate stat datas
+        '''
         
-        query = f"SELECT table, name, type FROM system.columns WHERE database = '{db_manager.CH_DATABASE}'"
+        database = db_manager.CH_DATABASE
+        query = f"SELECT table, name, type FROM system.columns WHERE database = '{database}'"
         df_cols = db_manager.client.query_df(query)
         
         run_ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         #print(f"Calculation for the table : {db_manager.CH_DATABASE}")
 
-        for _, row in df_cols.iterrows():
-            table_name = row['table']
-            col_obj = Col(name=row['name'], ch_type=row['type'])
-
+        for table_name in df_cols['table'].unique():
+            dest_stats_table = f"stats_{database}_{table_name}"
+            
             initialize_meta_table(db_manager, table_name)
             
             try:
-                #print(f"  Calculating : {table_name}.{col_obj.name}...")
-                compute_stats_for_column(
-                    db_manager.client, 
-                    run_ts, 
-                    db_manager.CH_DATABASE,
-                    table_name, 
-                    col_obj,
-                )
+                db_manager.client.command(f"TRUNCATE TABLE `meta`.`{dest_stats_table}`")
             except Exception as e:
-                print(f"Error in {col_obj.name}: {e}")
+                print(f"Impossible to clear : {dest_stats_table}: {e}")
 
-        print(f"\n Results are in database meta, table stats_{db_manager.CH_DATABASE}")
+            table_cols = df_cols[df_cols['table'] == table_name]
+            
+            for _, row in table_cols.iterrows():
+                col_obj = Col(name=row['name'], ch_type=row['type'])
+                
+                try:
+                    compute_stats_for_column(
+                        db_manager.client, 
+                        run_ts, 
+                        database,
+                        table_name, 
+                        col_obj,
+                    )
+                except Exception as e:
+                    print(f"Error on : {table_name}.{col_obj.name}: {e}")
+
+        #print(f"\n Results are in database meta, table stats_{db_manager.CH_DATABASE}")
 
 def initialize_meta_table(db_manager, table_name):
     '''Create the destination table if it doesn't exist and return the created table name'''

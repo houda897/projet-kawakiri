@@ -42,7 +42,7 @@ class clickhouse_manager :
                     username=self.CH_USER,
                     password=self.CH_PASSWORD
                 )
-                print("Clickhouse sucessfully connected.")
+                #print("Clickhouse sucessfully connected.")
             except Exception as e:
                 print(f"Error during clickhouse connection : {e}")
                 exit()
