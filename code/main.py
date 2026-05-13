@@ -15,5 +15,5 @@ def pipeline_and_search() :
 
 # stats_pipeline()
 dict = calculate_identifiability("Exercice","test_profiling_clients")
-print("\n",dict)
-print("\n \n ID : ", dict["client_id"])
+#print("\n",dict)
+#print("\n \n ID : ", dict["client_id"])

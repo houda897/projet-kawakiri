@@ -1,5 +1,7 @@
 from .clickhouse_manager import clickhouse_manager
 import math
+import os
+from dotenv import load_dotenv
 
 def get_table_stats(database, table):
     '''
@@ -8,7 +10,7 @@ def get_table_stats(database, table):
     '''
     
     stats_table_name = f"stats_{database}_{table}"
-    print(stats_table_name)
+    #print(stats_table_name)
     
     query = f"""
     SELECT 
@@ -50,8 +52,12 @@ def calculate_identifiability(database, table):
     the identifiability score
 
     '''
-    display_result      = False  # -- Turn True to display result in terminal
-    display_calculation = False  # -- Turn True to display calculation in terminal
+
+    load_dotenv()
+
+    # Terminal display (Modification in)
+    display_result      = os.getenv("Result", "False").lower() == "true"
+    display_calculation = os.getenv("Calculation", "False").lower() == "true"
 
     stats = get_table_stats(database, table)
 
@@ -59,10 +65,15 @@ def calculate_identifiability(database, table):
         print(f"No data found for {database}.{table}")
         return
     
-    # 2. Configuration des poids (Pondération)
-    W_UNIQUENESS = 0.5
-    W_ENTROPY = 0.3
-    W_COMPLETENESS = 0.2
+    # Ponderation (Weight modification in .env)
+    W_UNIQUENESS = float(os.getenv("W_UNIQUENESS", 0.5))
+    W_ENTROPY = float(os.getenv("W_ENTROPY", 0.3))
+    W_COMPLETENESS = float(os.getenv("W_COMPLETENESS", 0.2))
+
+    total_weight = W_UNIQUENESS + W_ENTROPY + W_COMPLETENESS
+    if not (0.9999 <= total_weight <= 1.0001):
+        print(f"Total weight : {round(total_weight,3)}, is not equal to 1")
+        return
     
     results = {}
 
@@ -92,14 +103,19 @@ def calculate_identifiability(database, table):
             print("completeness =", completeness)
             print("score =", score)
             print("score_final =", score)
+
         
         
-        # Diagnosis
-        if score > 0.85:
+        # Diagnosis (Threshold modification in .env)
+        th_pk = float(os.getenv("TH_PK", 0.85))
+        th_info = float(os.getenv("TH_info", 0.5))
+        th_cat = float(os.getenv("TH_cat", 0.2))
+        
+        if score > th_pk:
             diag = "PK CANDIDATE"
-        elif score > 0.5:
+        elif score > th_info:
             diag = "Useful info"
-        elif score > 0.2:
+        elif score > th_cat:
             diag = "Category"
         else:
             diag = "Non usable data"
