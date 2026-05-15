@@ -39,6 +39,7 @@ def ensure_meta_schema(client) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_sources
         (
+            run_id String,
             source_path String,
             target_database String,
             target_table String,
@@ -58,6 +59,7 @@ def ensure_meta_schema(client) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.detected_columns
         (
+            run_id String,
             target_database String,
             target_table String,
             column_name String,
@@ -66,7 +68,7 @@ def ensure_meta_schema(client) -> None:
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
-        ORDER BY (target_database, target_table, column_name)
+        ORDER BY (run_id, target_database, target_table, column_name)
         """
     )
 
@@ -91,5 +93,25 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, profiled_at)
+        """
+    )
+    # Store mathematically inferred simple primary-key candidates.
+    client.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
+        (
+            database_name String,
+            table_name String,
+            column_name String,
+            column_type String,
+            rows UInt64,
+            null_ratio Float64,
+            uniqueness_ratio Float64,
+            confidence Float64,
+            reason String,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, table_name, confidence, column_name)
         """
     )

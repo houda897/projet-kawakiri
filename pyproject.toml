@@ -1,0 +1,58 @@
+[project]
+name = "kawakiri"
+version = "0.1.0"
+description = "Librairie Open Source de Reverse Engineering et Data Science de Structure"
+authors = [
+    {name = "AMSE & Koushin"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "clickhouse-connect",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mkdocs",
+    "mkdocs-material",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long, handled by black
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+pythonpath = [
+    "code"
+]
+
+[tool.pyright]
+extraPaths = ["code"]

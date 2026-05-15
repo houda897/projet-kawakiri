@@ -1,16 +1,21 @@
 import argparse
 
 from core.client import get_client
-from ingestion.csv_loader import import_csv_folder_to_clickhouse, import_csv_to_clickhouse
-from inference.primary_key import infer_primary_key_candidates, print_primary_key_candidates
-from profiling.basic_profile import profile_database
+from core.logger import get_logger
+from ingestion.csv_loader import CsvIngestionEngine
+from inference.join_candidate import JoinEngine
+from inference.primary_key import PrimaryKeyEngine
+from profiling.basic_profile import ProfileEngine
+
+logger = get_logger(__name__)
 
 
 def run_csv_ingestion(path: str, table: str | None) -> None:
     client = get_client()
-    result = import_csv_to_clickhouse(client, path, table_name=table)
+    engine = CsvIngestionEngine(client)
+    result = engine.import_csv_to_clickhouse(path, table_name=table)
 
-    print(
+    logger.info(
         f"Import terminé : {result['row_count']} lignes dans "
         f"{result['target_database']}.{result['target_table']}"
     )
@@ -18,37 +23,63 @@ def run_csv_ingestion(path: str, table: str | None) -> None:
 
 def run_folder_ingestion(path: str) -> None:
     client = get_client()
-    results = import_csv_folder_to_clickhouse(client, path)
+    engine = CsvIngestionEngine(client)
+    results = engine.import_csv_folder_to_clickhouse(path)
 
     success_count = sum(1 for result in results if result["status"] == "success")
     failed_count = len(results) - success_count
     total_rows = sum(result["row_count"] for result in results)
 
-    print(f"Import dossier terminé : {success_count} succès, {failed_count} échec(s)")
-    print(f"Lignes importées : {total_rows}")
+    logger.info(f"Import dossier terminé : {success_count} succès, {failed_count} échec(s)")
+    logger.info(f"Lignes importées : {total_rows}")
 
 
 def run_basic_profile() -> None:
     client = get_client()
-    profiles = profile_database(client)
+    engine = ProfileEngine(client)
+    profiles = engine.profile_database()
 
-    print(f"Profilage terminé : {len(profiles)} colonnes profilées")
+    logger.info(f"Profilage terminé : {len(profiles)} colonnes profilées")
 
 
 def run_pk_inference() -> None:
     client = get_client()
-    candidates = infer_primary_key_candidates(client)
-    print_primary_key_candidates(candidates)
+    engine = PrimaryKeyEngine(client)
+    candidates = engine.infer_candidates()
+    engine.print_candidates(candidates)
+
+
+def run_join(
+    source_table: str,
+    source_column: str,
+    target_table: str,
+    target_column: str,
+) -> None:
+    client = get_client()
+
+    primary_keys = PrimaryKeyEngine(client).infer_candidates()
+    join_engine = JoinEngine(client)
+
+    result = join_engine.evaluate_join_by_target(
+        source_table=source_table,
+        source_column=source_column,
+        target_table=target_table,
+        target_column=target_column,
+        primary_keys=primary_keys,
+    )
+
+    logger.info(
+        f"{result.source_table}.{result.source_column} -> "
+        f"{result.target_table}.{result.target_column}"
+    )
+    logger.info(f"Source non-null rows : {result.source_non_null_rows}")
+    logger.info(f"Matched rows         : {result.matched_rows}")
+    logger.info(f"Join success ratio   : {result.join_success_ratio}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kawakiri")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    subparsers.add_parser(
-        "infer-pk",
-        help="Infer simple primary-key candidates from column profiles",
-    )
 
     ingest_parser = subparsers.add_parser(
         "ingest-csv",
@@ -67,6 +98,19 @@ def main() -> None:
         "profile-basic",
         help="Store basic column profiles in lab_meta",
     )
+    subparsers.add_parser(
+        "infer-pk",
+        help="Infer simple primary-key candidates from column profiles",
+    )
+
+    join_parser = subparsers.add_parser(
+        "test-join",
+        help="Test join between source and target columns",
+    )
+    join_parser.add_argument("--source-table", required=True)
+    join_parser.add_argument("--source-column", required=True)
+    join_parser.add_argument("--target-table", required=True)
+    join_parser.add_argument("--target-column", required=True)
 
     args = parser.parse_args()
 
@@ -78,6 +122,13 @@ def main() -> None:
         run_basic_profile()
     elif args.command == "infer-pk":
         run_pk_inference()
+    elif args.command == "test-join":
+        run_join(
+            source_table=args.source_table,
+            source_column=args.source_column,
+            target_table=args.target_table,
+            target_column=args.target_column,
+        )
 
 
 if __name__ == "__main__":

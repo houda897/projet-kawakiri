@@ -1,0 +1,22 @@
+site_name: Kawakiri
+site_description: Open Source Reverse Engineering Library (Structure Data Science)
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+
+nav:
+  - Home: index.md
+  - Installation Guide: installation.md
+  - Architecture: architecture.md
