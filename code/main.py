@@ -68,14 +68,17 @@ def run_join(
         primary_keys=primary_keys,
     )
 
-    logger.info(
-        f"{result.source_table}.{result.source_column} -> "
-        f"{result.target_table}.{result.target_column}"
-    )
-    logger.info(f"Source non-null rows : {result.source_non_null_rows}")
-    logger.info(f"Matched rows         : {result.matched_rows}")
-    logger.info(f"Join success ratio   : {result.join_success_ratio}")
+    JoinEngine.print_result(result)
 
+
+def run_join_inference() -> None:
+    client = get_client()
+
+    primary_keys = PrimaryKeyEngine(client).infer_candidates()
+    join_engine = JoinEngine(client)
+    candidates = join_engine.evaluate_candidates(primary_keys)
+
+    JoinEngine.print_candidates(candidates)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kawakiri")
@@ -102,10 +105,14 @@ def main() -> None:
         "infer-pk",
         help="Infer simple primary-key candidates from column profiles",
     )
+    subparsers.add_parser(
+        "infer-joins",
+        help="Infer join candidates from primary-key candidates",
+    )
 
     join_parser = subparsers.add_parser(
-        "test-join",
-        help="Test join between source and target columns",
+        "evaluate-join",
+        help="Evaluate join between source and target columns",
     )
     join_parser.add_argument("--source-table", required=True)
     join_parser.add_argument("--source-column", required=True)
@@ -122,13 +129,15 @@ def main() -> None:
         run_basic_profile()
     elif args.command == "infer-pk":
         run_pk_inference()
-    elif args.command == "test-join":
+    elif args.command == "evaluate-join":
         run_join(
             source_table=args.source_table,
             source_column=args.source_column,
             target_table=args.target_table,
             target_column=args.target_column,
         )
+    elif args.command == "infer-joins":
+        run_join_inference()
 
 
 if __name__ == "__main__":
