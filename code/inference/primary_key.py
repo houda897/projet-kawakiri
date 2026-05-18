@@ -82,7 +82,7 @@ class PrimaryKeyEngine:
                 candidate.table_name,
                 candidate.column_name,
                 candidate.column_type,
-                candidate.rows, 
+                candidate.rows,
                 candidate.null_ratio,
                 candidate.uniqueness_ratio,
                 candidate.confidence,

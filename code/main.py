@@ -80,6 +80,7 @@ def run_join_inference() -> None:
 
     JoinEngine.print_candidates(candidates)
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kawakiri")
     subparsers = parser.add_subparsers(dest="command", required=True)
