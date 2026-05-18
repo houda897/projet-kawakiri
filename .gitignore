@@ -1,3 +1,22 @@
 .env
 .idea/
 .vscode/
+.gitignore
+.venv/
+
+### --- File cache --- ###
+
+code/stats/__pycache__/
+code/tests/__pycache__/
+
+### --- CSV --- ###
+
+Deciphering_Environmental_Air_Pollution.csv
+Effets_de_la_pollution_atmosphérique_sur_la_santé.csv
+Global_Ocean_Physics_Analysis_and_Forecast.nc
+Pertes_economiques_provoquees_par_des_situations_climatiques_extremes.xml
+Pollution_saleté_ou_autres_problèmes_environnementaux.csv
+Système_de_diffusion_AQUASTAT.csv
+Terrestrial_protected_area_by_designation_type.csv
+Water_quality_data.csv
+BDD/Water_quality_data.csv
