@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "kawakiri"
 version = "0.1.0"
@@ -26,6 +30,13 @@ dev = [
 line-length = 100
 target-version = ['py310']
 include = '\.pyi?$'
+
+[tool.setuptools]
+package-dir = {"" = "code"}
+
+[tool.setuptools.packages.find]
+where = ["code"]
+namespaces = true
 
 [tool.ruff]
 line-length = 100
