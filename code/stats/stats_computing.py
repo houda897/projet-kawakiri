@@ -1,30 +1,35 @@
 from .clickhouse_manager import clickhouse_manager
 import datetime
 
+
 def stats_pipeline():
-    '''Main pipeline'''
+    """Main pipeline"""
     db_manager = clickhouse_manager()
     run_full_profiling(db_manager)
-    
+
+
 def q_ident(name):
-    '''Use of an object to protect the name'''
+    """Use of an object to protect the name"""
     return f"`{name}`"
 
+
 class Col:
-    '''Simple definition for column object'''
+    """Simple definition for column object"""
+
     def __init__(self, name, ch_type):
         self.name = name
         self.ch_type = ch_type
 
+
 def compute_stats_for_column(client, run_ts, database, table, col):
-    '''Request and calcultate the needed stats from all columns of a table'''
+    """Request and calcultate the needed stats from all columns of a table"""
 
     META_DB = "meta"
-    
-    num_types = ['Int', 'Float', 'Decimal', 'UInt']
+
+    num_types = ["Int", "Float", "Decimal", "UInt"]
     is_numeric = any(t in col.ch_type for t in num_types)
 
-    '''Sparsity, variation coefficient and skewness calcuation'''
+    """Sparsity, variation coefficient and skewness calcuation"""
     if is_numeric:
         metrics_calc = f"""
             avg({q_ident(col.name)}) as _avg,
@@ -86,56 +91,65 @@ def compute_stats_for_column(client, run_ts, database, table, col):
       (SELECT {skew_expr} FROM base) AS skewness
     FROM probs
     """
-    
-    client.command(sql, parameters={
-        "run_ts": run_ts, "db": database, "table": table, "col": col.name, "typ": col.ch_type
-    })
+
+    client.command(
+        sql,
+        parameters={
+            "run_ts": run_ts,
+            "db": database,
+            "table": table,
+            "col": col.name,
+            "typ": col.ch_type,
+        },
+    )
+
 
 def run_full_profiling(db_manager):
-        '''
-        Find all the table of a database and loop the stats calculation on each one
-        Clear the table before inserting to make sure to not duplicate stat datas
-        '''
-        
-        database = db_manager.CH_DATABASE
-        query = f"SELECT table, name, type FROM system.columns WHERE database = '{database}'"
-        df_cols = db_manager.client.query_df(query)
-        
-        run_ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        #print(f"Calculation for the table : {db_manager.CH_DATABASE}")
+    """
+    Find all the table of a database and loop the stats calculation on each one
+    Clear the table before inserting to make sure to not duplicate stat datas
+    """
 
-        for table_name in df_cols['table'].unique():
-            dest_stats_table = f"stats_{database}_{table_name}"
-            
-            initialize_meta_table(db_manager, table_name)
-            
+    database = db_manager.CH_DATABASE
+    query = f"SELECT table, name, type FROM system.columns WHERE database = '{database}'"
+    df_cols = db_manager.client.query_df(query)
+
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # print(f"Calculation for the table : {db_manager.CH_DATABASE}")
+
+    for table_name in df_cols["table"].unique():
+        dest_stats_table = f"stats_{database}_{table_name}"
+
+        initialize_meta_table(db_manager, table_name)
+
+        try:
+            db_manager.client.command(f"TRUNCATE TABLE `meta`.`{dest_stats_table}`")
+        except Exception as e:
+            print(f"Impossible to clear : {dest_stats_table}: {e}")
+
+        table_cols = df_cols[df_cols["table"] == table_name]
+
+        for _, row in table_cols.iterrows():
+            col_obj = Col(name=row["name"], ch_type=row["type"])
+
             try:
-                db_manager.client.command(f"TRUNCATE TABLE `meta`.`{dest_stats_table}`")
+                compute_stats_for_column(
+                    db_manager.client,
+                    run_ts,
+                    database,
+                    table_name,
+                    col_obj,
+                )
             except Exception as e:
-                print(f"Impossible to clear : {dest_stats_table}: {e}")
+                print(f"Error on : {table_name}.{col_obj.name}: {e}")
 
-            table_cols = df_cols[df_cols['table'] == table_name]
-            
-            for _, row in table_cols.iterrows():
-                col_obj = Col(name=row['name'], ch_type=row['type'])
-                
-                try:
-                    compute_stats_for_column(
-                        db_manager.client, 
-                        run_ts, 
-                        database,
-                        table_name, 
-                        col_obj,
-                    )
-                except Exception as e:
-                    print(f"Error on : {table_name}.{col_obj.name}: {e}")
+    # print(f"\n Results are in database meta, table stats_{db_manager.CH_DATABASE}")
 
-        #print(f"\n Results are in database meta, table stats_{db_manager.CH_DATABASE}")
 
 def initialize_meta_table(db_manager, table_name):
-    '''Create the destination table if it doesn't exist and return the created table name'''
-    #print("Checking for stats table")
+    """Create the destination table if it doesn't exist and return the created table name"""
+    # print("Checking for stats table")
 
     stats_table_name = f"stats_{db_manager.CH_DATABASE}_{table_name}"
 

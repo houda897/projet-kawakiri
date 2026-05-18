@@ -15,8 +15,7 @@ def ensure_meta_schema(client) -> None:
     client.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(META_DB)}")
 
     # Store one row per ingestion attempt, including status and error message.
-    client.command(
-        f"""
+    client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_runs
         (
             source_path String,
@@ -31,12 +30,10 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """
-    )
+        """)
 
     # Store source-level diagnostics and whether human review is required.
-    client.command(
-        f"""
+    client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_sources
         (
             run_id String,
@@ -51,12 +48,10 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """
-    )
+        """)
 
     # Store inferred column metadata.
-    client.command(
-        f"""
+    client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.detected_columns
         (
             run_id String,
@@ -69,12 +64,10 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (run_id, target_database, target_table, column_name)
-        """
-    )
+        """)
 
     # Store column profiling results for each column.
-    client.command(
-        f"""
+    client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_profiles
         (
             database_name String,
@@ -93,11 +86,9 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, profiled_at)
-        """
-    )
+        """)
     # Store mathematically inferred simple primary-key candidates.
-    client.command(
-        f"""
+    client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
             database_name String,
@@ -113,5 +104,4 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, confidence, column_name)
-        """
-    )
+        """)
