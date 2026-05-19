@@ -1,4 +1,4 @@
-from core.client import META_DB
+from core.manager import META_DB
 from core.schema import q_ident
 
 
@@ -105,3 +105,23 @@ def ensure_meta_schema(client) -> None:
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, confidence, column_name)
         """)
+    client.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.identifiability_scores
+        (
+            database_name String,
+            table_name String,
+            column_name String,
+            uniqueness_ratio Float64,
+            entropy_ratio Float64,
+            completeness Float64,
+            identifiability_score Float64,
+            diagnostic String,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, table_name, column_name, created_at)
+        """
+    )
+
+

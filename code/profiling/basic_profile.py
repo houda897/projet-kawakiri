@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import datetime
 
-from core.client import CH_DB, META_DB
+from core.logger import get_logger
+from core.manager import CH_DB, META_DB
 from core.meta import ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
+from stats.stats_computing import compute_column_stats, ensure_stats_table
+
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -32,13 +38,10 @@ class ColumnProfile:
 
 
 class ProfileEngine:
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, db):
+        self.db = db
 
     def compute_basic_profile_for_column(self, table: str, col: Col) -> ColumnProfile:
-        """
-        Compute the core profiling metrics for one ClickHouse column.
-        """
         table_ref = f"{q_ident(CH_DB)}.{q_ident(table)}"
         col_ref = q_ident(col.name)
 
@@ -54,7 +57,8 @@ class ProfileEngine:
           if(non_null_rows = 0, '', toString(max({col_ref}))) AS max_value
         FROM {table_ref}
         """
-        row = self.client.query(sql).result_rows[0]
+
+        row = self.db.query(sql).result_rows[0]
 
         return ColumnProfile(
             database_name=CH_DB,
@@ -72,9 +76,6 @@ class ProfileEngine:
         )
 
     def insert_column_profiles(self, profiles: list[ColumnProfile]) -> None:
-        """
-        Persist computed column profiles in the metadata database.
-        """
         if not profiles:
             return
 
@@ -96,7 +97,7 @@ class ProfileEngine:
             for profile in profiles
         ]
 
-        self.client.insert(
+        self.db.insert(
             f"{META_DB}.column_profiles",
             rows,
             column_names=[
@@ -119,23 +120,36 @@ class ProfileEngine:
         """
         Profile all regular columns in the configured ClickHouse database.
         """
-        ensure_meta_schema(self.client)
+
+        ensure_meta_schema(self.db)
+        ensure_stats_table(self.db)
 
         profiles = []
+        run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        for table in list_tables(self.client):
-            for col in list_columns(self.client, table):
+        for table in list_tables(self.db):
+            for col in list_columns(self.db, table):
                 if col.name.startswith("__"):
                     continue
 
                 profiles.append(self.compute_basic_profile_for_column(table, col))
 
+                try:
+                    compute_column_stats(
+                        db=self.db,
+                        run_ts=run_ts,
+                        database=CH_DB,
+                        table=table,
+                        col=col,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to compute advanced stats for %s.%s: %s",
+                        table,
+                        col.name,
+                        exc,
+                    )
+
         self.insert_column_profiles(profiles)
         return profiles
 
-
-def profiles_to_dicts(profiles: list[ColumnProfile]) -> list[dict]:
-    """
-    Convert profile objects to dictionaries for tests or serialization.
-    """
-    return [asdict(profile) for profile in profiles]

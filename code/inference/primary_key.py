@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from core.client import META_DB
+from core.logger import get_logger
+from core.manager import ClickHouseManager, META_DB
 from core.schema import q_ident
+
+logger = get_logger(__name__)
 
 
 @dataclass
 class PrimaryKeyCandidate:
-    """Candidate primary key inferred from column profiling metrics."""
-
     database_name: str
     table_name: str
     column_name: str
@@ -17,39 +18,53 @@ class PrimaryKeyCandidate:
     rows: int
     null_ratio: float
     uniqueness_ratio: float
+    entropy_ratio: float
+    identifiability_score: float
     confidence: float
     reason: str
 
 
+
 class PrimaryKeyEngine:
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, db: ClickHouseManager):
+        self.db = db
 
     def infer_candidates(
         self,
         threshold: float = 0.99,
     ) -> list[PrimaryKeyCandidate]:
         """
-        Infer simple primary-key candidates from stored column profiles.
+        Infer columns that behave like simple primary keys.
         """
         sql = f"""
         SELECT
-            database_name,
-            table_name,
-            column_name,
-            column_type,
-            rows,
-            null_ratio,
-            uniqueness_ratio,
-            round(uniqueness_ratio * (1 - null_ratio), 6) AS confidence
-        FROM {q_ident(META_DB)}.column_profiles
-        WHERE uniqueness_ratio >= %(threshold)s
-        AND null_ratio <= 0.000001
-        AND NOT startsWith(column_name, '__')
-        ORDER BY table_name, confidence DESC, column_name
+            p.database_name,
+            p.table_name,
+            p.column_name,
+            p.column_type,
+            p.rows,
+            p.null_ratio,
+            p.uniqueness_ratio,
+            coalesce(i.entropy_ratio, 0.0) AS entropy_ratio,
+            coalesce(i.identifiability_score, 0.0) AS identifiability_score,
+            round(
+                0.7 * p.uniqueness_ratio
+                + 0.3 * coalesce(i.identifiability_score, 0.0),
+                6
+            ) AS confidence
+        FROM {q_ident(META_DB)}.column_profiles AS p
+        LEFT JOIN {q_ident(META_DB)}.identifiability_scores AS i
+            ON p.database_name = i.database_name
+        AND p.table_name = i.table_name
+        AND p.column_name = i.column_name
+        WHERE p.uniqueness_ratio >= %(threshold)s
+        AND p.null_ratio <= 0.000001
+        AND NOT startsWith(p.column_name, '__')
+        ORDER BY p.table_name, confidence DESC, p.column_name
         """
 
-        rows = self.client.query(sql, parameters={"threshold": threshold}).result_rows
+
+        rows = self.db.query(sql, parameters={"threshold": threshold}).result_rows
 
         candidates = []
         for row in rows:
@@ -62,21 +77,20 @@ class PrimaryKeyEngine:
                     rows=row[4],
                     null_ratio=row[5],
                     uniqueness_ratio=row[6],
-                    confidence=row[7],
+                    entropy_ratio=row[7],
+                    identifiability_score=row[8],
+                    confidence=row[9],
                     reason="confidence=uniqueness_ratio*(1-null_ratio)",
                 )
             )
 
         return candidates
 
-    def store_candidates(
-        self,
-        candidates: list[PrimaryKeyCandidate],
-    ) -> None:
+    def store_candidates(self, candidates: list[PrimaryKeyCandidate]) -> None:
         if not candidates:
             return
 
-        rows_to_insert = [
+        rows = [
             [
                 candidate.database_name,
                 candidate.table_name,
@@ -91,9 +105,9 @@ class PrimaryKeyEngine:
             for candidate in candidates
         ]
 
-        self.client.insert(
+        self.db.insert(
             f"{META_DB}.primary_key_candidates",
-            rows_to_insert,
+            rows,
             column_names=[
                 "database_name",
                 "table_name",
@@ -109,29 +123,25 @@ class PrimaryKeyEngine:
 
     @staticmethod
     def print_candidates(candidates: list[PrimaryKeyCandidate]) -> None:
-        """
-        Print inferred primary-key candidates in a compact human-readable format.
-        """
         if not candidates:
-            print("No primary-key candidates found.")
+            logger.info("No primary-key candidates found.")
             return
 
         current_table = None
+
         for candidate in candidates:
             if candidate.table_name != current_table:
                 current_table = candidate.table_name
-                print(f"\n=== {candidate.table_name} ===")
+                logger.info("=== %s ===", candidate.table_name)
 
-            print(
-                f"{candidate.column_name} "
-                f"({candidate.column_type}) | "
-                f"confidence={candidate.confidence} | "
-                f"reason={candidate.reason}"
+            logger.info(
+                "%s (%s) | confidence=%s | reason=%s",
+                candidate.column_name,
+                candidate.column_type,
+                candidate.confidence,
+                candidate.reason,
             )
 
 
 def candidates_to_dicts(candidates: list[PrimaryKeyCandidate]) -> list[dict]:
-    """
-    Convert candidate objects to dictionaries for serialization or tests.
-    """
     return [asdict(candidate) for candidate in candidates]

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from clickhouse_connect.driver import Client
-
-from core.client import CH_DB, META_DB
+from core.logger import get_logger
+from core.manager import CH_DB, META_DB, ClickHouseManager
 from core.schema import q_ident
 from inference.primary_key import PrimaryKeyCandidate
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -29,9 +30,7 @@ class JoinPrimaryKeyCandidate:
 
 @dataclass
 class SourceColumn:
-    """
-    Profiled column that can be evaluated as a possible foreign key.
-    """
+    """Profiled column that can be evaluated as a possible foreign key."""
 
     table_name: str
     column_name: str
@@ -41,13 +40,10 @@ class SourceColumn:
 class JoinEngine:
     """
     Evaluate physical joins between profiled columns and primary-key candidates.
-
-    The engine does not infer primary keys itself. It receives key candidates
-    from the primary-key inference step and measures empirical value coverage.
     """
 
-    def __init__(self, client: Client):
-        self.client = client
+    def __init__(self, db: ClickHouseManager):
+        self.db = db
 
     def evaluate_join_to_primary_key(
         self,
@@ -89,7 +85,7 @@ class JoinEngine:
             ON s.value = t.value
         """
 
-        row = self.client.query(sql).result_rows[0]
+        row = self.db.query(sql).result_rows[0]
 
         return JoinPrimaryKeyCandidate(
             source_table=source_table,
@@ -109,10 +105,6 @@ class JoinEngine:
         target_column: str,
         primary_keys: list[PrimaryKeyCandidate],
     ) -> JoinPrimaryKeyCandidate:
-        """
-        Resolve a named target key and evaluate source-column coverage.
-        """
-
         primary_key = self.find_primary_key(
             primary_keys=primary_keys,
             target_table=target_table,
@@ -131,10 +123,6 @@ class JoinEngine:
         target_table: str,
         target_column: str,
     ) -> PrimaryKeyCandidate:
-        """
-        Find a primary-key candidate by table and column name.
-        """
-
         for primary_key in primary_keys:
             if primary_key.table_name == target_table and primary_key.column_name == target_column:
                 return primary_key
@@ -145,10 +133,6 @@ class JoinEngine:
         )
 
     def load_source_columns(self) -> list[SourceColumn]:
-        """
-        Load profiled columns that can provide evidence for a relationship.
-        """
-
         sql = f"""
         SELECT
             table_name,
@@ -160,7 +144,7 @@ class JoinEngine:
         ORDER BY table_name, column_name
         """
 
-        rows = self.client.query(sql).result_rows
+        rows = self.db.query(sql).result_rows
 
         return [
             SourceColumn(
@@ -176,10 +160,6 @@ class JoinEngine:
         primary_keys: list[PrimaryKeyCandidate],
         min_success_ratio: float = 0.95,
     ) -> list[JoinPrimaryKeyCandidate]:
-        """
-        Evaluate all type-compatible source columns against primary-key candidates.
-        """
-
         source_columns = self.load_source_columns()
         candidates = []
 
@@ -204,10 +184,6 @@ class JoinEngine:
         source: SourceColumn,
         primary_key: PrimaryKeyCandidate,
     ) -> bool:
-        """
-        Exclude pairs that cannot represent a foreign-key to primary-key relation.
-        """
-
         same_table = source.table_name == primary_key.table_name
         incompatible_type = source.column_type != primary_key.column_type
 
@@ -215,31 +191,29 @@ class JoinEngine:
 
     @staticmethod
     def print_result(result: JoinPrimaryKeyCandidate) -> None:
-        """
-        Print one join evaluation result.
-        """
-
-        print(
-            f"{result.source_table}.{result.source_column} -> "
-            f"{result.target_table}.{result.target_column}"
+        logger.info(
+            "%s.%s -> %s.%s",
+            result.source_table,
+            result.source_column,
+            result.target_table,
+            result.target_column,
         )
-        print(f"Source non-null rows : {result.source_non_null_rows}")
-        print(f"Matched rows         : {result.matched_rows}")
-        print(f"Join success ratio   : {result.join_success_ratio}")
+        logger.info("Source non-null rows : %s", result.source_non_null_rows)
+        logger.info("Matched rows         : %s", result.matched_rows)
+        logger.info("Join success ratio   : %s", result.join_success_ratio)
 
     @staticmethod
     def print_candidates(candidates: list[JoinPrimaryKeyCandidate]) -> None:
-        """
-        Print inferred join candidates.
-        """
-
         if not candidates:
-            print("No join candidates found.")
+            logger.info("No join candidates found.")
             return
 
         for candidate in candidates:
-            print(
-                f"{candidate.source_table}.{candidate.source_column} -> "
-                f"{candidate.target_table}.{candidate.target_column} | "
-                f"ratio={candidate.join_success_ratio}"
+            logger.info(
+                "%s.%s -> %s.%s | ratio=%s",
+                candidate.source_table,
+                candidate.source_column,
+                candidate.target_table,
+                candidate.target_column,
+                candidate.join_success_ratio,
             )
