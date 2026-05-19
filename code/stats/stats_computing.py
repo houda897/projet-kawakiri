@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from core.manager import CH_DB, META_DB, ClickHouseManager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.schema import Col, q_ident
 
 
-def ensure_stats_table(db: ClickHouseManager) -> None:
+def ensure_stats_table(db: clickhouse_manager) -> None:
     """
     Create the metadata table that stores advanced column statistics.
 
@@ -34,7 +34,7 @@ def ensure_stats_table(db: ClickHouseManager) -> None:
 
 
 def compute_column_stats(
-    db: ClickHouseManager,
+    db: clickhouse_manager,
     run_ts: str,
     database: str,
     table: str,
@@ -207,5 +207,5 @@ def run_full_profiling(db_manager) -> None:
 
 
 def stats_pipeline() -> None:
-    cm = ClickHouseManager.get_instance()
+    cm = clickhouse_manager.get_instance()
     run_full_profiling(cm)

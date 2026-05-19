@@ -1,4 +1,4 @@
-from core.manager import META_DB
+from core.clickhouse_manager import META_DB
 from core.schema import q_ident
 
 

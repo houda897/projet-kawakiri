@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from core.logger import get_logger
-from core.manager import ClickHouseManager, META_DB
+from core.clickhouse_manager import clickhouse_manager, META_DB
 from core.schema import q_ident
 
 logger = get_logger(__name__)
@@ -26,7 +26,7 @@ class PrimaryKeyCandidate:
 
 
 class PrimaryKeyEngine:
-    def __init__(self, db: ClickHouseManager):
+    def __init__(self, db: clickhouse_manager):
         self.db = db
 
     def infer_candidates(
