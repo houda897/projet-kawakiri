@@ -1,7 +1,12 @@
 import os
 import pandas as pd
 import itertools
-from .clickhouse_manager import clickhouse_manager
+from core.manager import ClickHouseManager
+from core.schema import q_ident
+from core.logger import get_logger
+
+
+logger = get_logger(__name__)
 
 def check_functional_dependency(database, table, col_A, col_B, limit_violations: int = 5) -> dict:
     """
@@ -14,10 +19,10 @@ def check_functional_dependency(database, table, col_A, col_B, limit_violations:
     - 'violations': Un DataFrame Pandas contenant les contre-exemples (si existants).
     - 'message': Un résumé textuel du diagnostic.
     """
-    # Protection des noms de tables et colonnes pour éviter les injections/erreurs de syntaxe
-    q_table = f"`{database}`.`{table}`"
-    q_A = f"`{col_A}`"
-    q_B = f"`{col_B}`"
+    # Use proper quoting for identifiers
+    q_table = f"{q_ident(database)}.{q_ident(table)}"
+    q_A = q_ident(col_A)
+    q_B = q_ident(col_B)
     
     query = f"""
     SELECT 
@@ -33,7 +38,7 @@ def check_functional_dependency(database, table, col_A, col_B, limit_violations:
     
     try:
         # Récupération du manager existant (Singleton)
-        db_manager = clickhouse_manager()
+        db_manager = ClickHouseManager.get_instance()
         df_violations = db_manager.query_df(query)
         
         if df_violations.empty:
@@ -50,7 +55,7 @@ def check_functional_dependency(database, table, col_A, col_B, limit_violations:
             }
             
     except Exception as e:
-        print(f"Erreur lors de l'analyse de dépendance entre {col_A} et {col_B}: {e}")
+        logger.error("Erreur lors de l'analyse de dépendance entre %s et %s: %s", col_A, col_B, e)
         return {
             "is_valid": False,
             "violations": pd.DataFrame(),
@@ -62,7 +67,7 @@ def analyze_table_dependencies(database: str, table: str) -> dict:
     Récupère toutes les colonnes d'une table, teste toutes les paires de dépendances 
     fonctionnelles possibles (A -> B) et retourne les résultats dans un dictionnaire.
     """
-    db_manager = clickhouse_manager()
+    db_manager = ClickHouseManager.get_instance()
     
     # 1. Requête pour récupérer proprement le nom de toutes les colonnes de la table
     columns_query = f"""
@@ -74,20 +79,20 @@ def analyze_table_dependencies(database: str, table: str) -> dict:
     try:
         df_cols = db_manager.query_df(columns_query)
         if df_cols.empty:
-            print(f"⚠️ Aucune colonne trouvée pour la table {database}.{table}")
+            logger.info("Aucune colonne trouvée pour la table %s.%s", database, table)
             return {}
-            
+
         columns = df_cols['name'].tolist()
-        print(f"🔍 Colonnes détectées ({len(columns)}) : {columns}")
-        
+        logger.info("Colonnes détectées (%s) : %s", len(columns), columns)
+
     except Exception as e:
-        print(f"❌ Impossible de récupérer les colonnes de la table : {e}")
+        logger.error("Impossible de récupérer les colonnes de la table : %s", e)
         return {}
 
     # 2. Générer toutes les paires de colonnes ordonnées (Permutations de taille 2)
     # Si on a [col1, col2], itertools.permutations génère (col1, col2) ET (col2, col1)
     all_pairs = list(itertools.permutations(columns, 2))
-    print(f"📊 Nombre total de dépendances à tester : {len(all_pairs)}")
+    logger.info("Nombre total de dépendances à tester : %s", len(all_pairs))
 
     global_results = {}
 

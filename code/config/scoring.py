@@ -1,0 +1,12 @@
+IDENTIFIABILITY_WEIGHTS = {
+    "uniqueness": 0.5,
+    "entropy": 0.3,
+    "completeness": 0.2,
+}
+
+IDENTIFIABILITY_THRESHOLDS = {
+    "high": 0.85,
+    "medium": 0.5,
+    "low": 0.2,
+}
+ 

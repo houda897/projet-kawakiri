@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
-from core.client import CH_DB
+from core.manager import CH_DB
 
 EXCLUDE_COL_TYPES_PREFIXES = ("Array", "Map", "Nested", "Tuple", "JSON", "Object")
 
@@ -46,3 +48,4 @@ def list_columns(client, table: str) -> list[Col]:
             continue
         cols.append(Col(name=name, ch_type=typ))
     return cols
+
