@@ -50,6 +50,7 @@ class JoinEngine:
         source_table: str,
         source_column: str,
         primary_key: PrimaryKeyCandidate,
+        limit_rows: int | None = None,
     ) -> JoinPrimaryKeyCandidate:
         """
         Measure whether a source column is covered by a primary-key candidate.
@@ -60,12 +61,15 @@ class JoinEngine:
         source_col = q_ident(source_column)
         target_col = q_ident(primary_key.column_name)
 
+        limit_clause = f"LIMIT {limit_rows}" if limit_rows is not None else ""
+
         sql = f"""
         WITH
             source_values AS (
                 SELECT {source_col} AS value
                 FROM {source_ref}
                 WHERE {source_col} IS NOT NULL
+                {limit_clause}
             ),
             target_values AS (
                 SELECT DISTINCT {target_col} AS value
@@ -180,12 +184,21 @@ class JoinEngine:
         return candidates
 
     @staticmethod
+    def _clean_type(ch_type: str) -> str:
+        """Strip Nullable() wrapper to compare base physical types."""
+        return ch_type.removeprefix("Nullable(").removesuffix(")")
+
+    @classmethod
     def should_skip_pair(
+        cls,
         source: SourceColumn,
         primary_key: PrimaryKeyCandidate,
     ) -> bool:
         same_table = source.table_name == primary_key.table_name
-        incompatible_type = source.column_type != primary_key.column_type
+        
+        source_base = cls._clean_type(source.column_type)
+        target_base = cls._clean_type(primary_key.column_type)
+        incompatible_type = source_base != target_base
 
         return same_table or incompatible_type
 
