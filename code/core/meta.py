@@ -88,6 +88,7 @@ def ensure_meta_schema(client) -> None:
         ORDER BY (database_name, table_name, column_name, profiled_at)
         """)
     # Store mathematically inferred simple primary-key candidates.
+    
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
@@ -98,6 +99,7 @@ def ensure_meta_schema(client) -> None:
             rows UInt64,
             null_ratio Float64,
             uniqueness_ratio Float64,
+            identifiability_score Float64,
             confidence Float64,
             reason String,
             created_at DateTime DEFAULT now()
