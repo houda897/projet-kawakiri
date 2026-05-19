@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.manager import CH_DB
+from core.clickhouse_manager import CH_DB
 
 EXCLUDE_COL_TYPES_PREFIXES = ("Array", "Map", "Nested", "Tuple", "JSON", "Object")
 

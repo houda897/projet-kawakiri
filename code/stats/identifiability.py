@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.manager import META_DB, ClickHouseManager
+from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.schema import q_ident
 from config.scoring import IDENTIFIABILITY_THRESHOLDS, IDENTIFIABILITY_WEIGHTS
 
@@ -33,7 +33,7 @@ class IdentifiabilityEngine:
 
     def __init__(
         self,
-        db: ClickHouseManager,
+        db: clickhouse_manager,
         weight_uniqueness: float = IDENTIFIABILITY_WEIGHTS["uniqueness"],
         weight_entropy: float = IDENTIFIABILITY_WEIGHTS["entropy"],
         weight_completeness: float = IDENTIFIABILITY_WEIGHTS["completeness"],
@@ -184,3 +184,25 @@ class IdentifiabilityEngine:
                 f"score={result.identifiability_score} | "
                 f"diagnostic={result.diagnostic}"
             )
+
+def get_columns_name(database, table):
+    """Get columns name for a given table
+    Return a list of column name"""
+    query = f"""
+    SELECT name
+    FROM system.columns
+    WHERE database = '{database}' AND table = '{table}'
+    """
+    try:
+        db_manager = clickhouse_manager()
+        df = db_manager.queryDf(query)
+
+        if df.empty:
+            print(f"No columns found for {database}.{table}")
+            return []
+
+        columns = df['name'].tolist()
+        return columns
+    except Exception as e:
+        print(f"Error during columns recuperation for {table}: {e}")
+        return []

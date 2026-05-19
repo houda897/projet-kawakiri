@@ -6,9 +6,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from core.manager import ClickHouseManager
+from core.clickhouse_manager import clickhouse_manager
 
-from core.manager import CH_DB, META_DB
+from core.clickhouse_manager import CH_DB, META_DB
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
 from core.schema import q_ident
@@ -61,7 +61,7 @@ class CsvIngestionEngine:
     inserts the file in batches.
     """
 
-    def __init__(self, db: ClickHouseManager):
+    def __init__(self, db: clickhouse_manager):
         self.db = db
 
     def import_csv_to_clickhouse(

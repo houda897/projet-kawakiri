@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import datetime
 
 from core.logger import get_logger
-from core.manager import CH_DB, META_DB
+from core.clickhouse_manager import CH_DB, META_DB
 from core.meta import ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
 from stats.stats_computing import compute_column_stats, ensure_stats_table

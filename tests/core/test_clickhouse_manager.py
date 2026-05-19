@@ -3,12 +3,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.manager import ClickHouseManager
+from core.clickhouse_manager import clickhouse_manager
 
 
 @pytest.fixture(autouse=True)
 def reset_singleton() -> None:
-    ClickHouseManager._instance = None
+    clickhouse_manager._instance = None
 
 
 @patch("core.manager.clickhouse_connect.get_client")
@@ -27,7 +27,7 @@ def test_connect_success(mock_get_client) -> None:
     mock_client = MagicMock()
     mock_get_client.return_value = mock_client
 
-    manager = ClickHouseManager()
+    manager = clickhouse_manager()
 
     mock_get_client.assert_called_once_with(
         host="localhost",
@@ -43,7 +43,7 @@ def test_connect_failure_raises_connection_error(mock_get_client) -> None:
     mock_get_client.side_effect = Exception("Connection refused")
 
     with pytest.raises(ConnectionError):
-        ClickHouseManager()
+        clickhouse_manager()
 
 
 @patch("core.manager.clickhouse_connect.get_client")
@@ -52,7 +52,7 @@ def test_query_calls_client(mock_get_client) -> None:
     mock_client.query.return_value = [("row1",)]
     mock_get_client.return_value = mock_client
 
-    manager = ClickHouseManager()
+    manager = clickhouse_manager()
     result = manager.query("SELECT 1")
 
     mock_client.query.assert_called_once_with("SELECT 1")
@@ -65,7 +65,7 @@ def test_query_with_parameters_calls_client(mock_get_client) -> None:
     mock_client.query.return_value = [("row1",)]
     mock_get_client.return_value = mock_client
 
-    manager = ClickHouseManager()
+    manager = clickhouse_manager()
     result = manager.query("SELECT %(x)s", parameters={"x": 1})
 
     mock_client.query.assert_called_once_with("SELECT %(x)s", parameters={"x": 1})
@@ -77,7 +77,7 @@ def test_insert_calls_client_with_column_names(mock_get_client) -> None:
     mock_client = MagicMock()
     mock_get_client.return_value = mock_client
 
-    manager = ClickHouseManager()
+    manager = clickhouse_manager()
     manager.insert("lab_db.test", [[1]], column_names=["id"])
 
     mock_client.insert.assert_called_once_with(
@@ -91,8 +91,8 @@ def test_insert_calls_client_with_column_names(mock_get_client) -> None:
 def test_get_instance_singleton(mock_get_client) -> None:
     mock_get_client.return_value = MagicMock()
 
-    instance1 = ClickHouseManager.get_instance()
-    instance2 = ClickHouseManager.get_instance()
+    instance1 = clickhouse_manager.get_instance()
+    instance2 = clickhouse_manager.get_instance()
 
     assert instance1 is instance2
     mock_get_client.assert_called_once()
@@ -101,4 +101,4 @@ def test_get_instance_singleton(mock_get_client) -> None:
 @patch.dict(os.environ, {"CH_PORT": "bad_port"}, clear=False)
 def test_invalid_port_raises_error() -> None:
     with pytest.raises(ValueError):
-        ClickHouseManager()
+        clickhouse_manager()

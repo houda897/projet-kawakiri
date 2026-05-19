@@ -20,7 +20,7 @@ CH_DB = os.getenv("CH_DATABASE", "lab_db")
 META_DB = os.getenv("META_DB", "lab_meta")
 
 
-class ClickHouseManager:
+class clickhouse_manager:
     """
     Central access point to ClickHouse.
 
@@ -63,7 +63,7 @@ class ClickHouseManager:
 
         return self.connect().query(sql, parameters=parameters)
 
-    def query_df(self, sql: str, parameters: dict | None = None):
+    def queryDf(self, sql: str, parameters: dict | None = None):
         if parameters is None:
             return self.connect().query_df(sql)
 
@@ -93,12 +93,12 @@ class ClickHouseManager:
         return self.meta_database
 
     @classmethod
-    def get_instance(cls) -> "ClickHouseManager":
+    def get_instance(cls) -> "clickhouse_manager":
         if cls._instance is None:
             cls._instance = cls()
 
         return cls._instance
 
 
-def get_manager() -> ClickHouseManager:
-    return ClickHouseManager.get_instance()
+def get_manager() -> clickhouse_manager:
+    return clickhouse_manager.get_instance()

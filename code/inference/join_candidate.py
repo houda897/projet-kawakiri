@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.logger import get_logger
-from core.manager import CH_DB, META_DB, ClickHouseManager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.schema import q_ident
 from inference.primary_key import PrimaryKeyCandidate
 
@@ -42,7 +42,7 @@ class JoinEngine:
     Evaluate physical joins between profiled columns and primary-key candidates.
     """
 
-    def __init__(self, db: ClickHouseManager):
+    def __init__(self, db: clickhouse_manager):
         self.db = db
 
     def evaluate_join_to_primary_key(
