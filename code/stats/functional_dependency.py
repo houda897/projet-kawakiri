@@ -24,11 +24,10 @@ def check_functional_dependency(database, table, col_A, col_B, limit_violations:
     q_A = q_ident(col_A)
     q_B = q_ident(col_B)
     
-    query = f"""
+    query_check = f"""
     SELECT 
         {q_A} AS valeur_A, 
-        uniqExact({q_B}) AS nb_valeurs_B_differentes,
-        groupArray(distinct {q_B}) AS exemples_B
+        uniqExact({q_B}) AS nb_valeurs_B_differentes
     FROM {q_table}
     GROUP BY valeur_A
     HAVING nb_valeurs_B_differentes > 1
