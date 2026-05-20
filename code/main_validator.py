@@ -1,5 +1,4 @@
 import argparse
-
 from core.logger import get_logger
 from core.clickhouse_manager import get_manager
 from inference.join_candidate import JoinEngine
@@ -8,6 +7,7 @@ from ingestion.csv_loader import CsvIngestionEngine
 from profiling.basic_profile import ProfileEngine
 from stats.identifiability import IdentifiabilityEngine
 from stats.functional_dependency import validate_dependency
+from inference.composite_key import CompositeKeyEngine
 
 logger = get_logger(__name__)
 
@@ -63,12 +63,50 @@ def run_identifiability() -> None:
 
 def run_pk_inference() -> None:
     db = get_manager()
-    engine = PrimaryKeyEngine(db)
+    pk_engine = PrimaryKeyEngine(db)
+    composite_engine = CompositeKeyEngine(db)
 
-    initial_candidates = engine.infer_candidates()
-    candidates = validate_dependency(initial_candidates)
-    engine.store_candidates(candidates)
-    engine.print_candidates(candidates)
+    all_candidates = pk_engine.infer_candidates(threshold=0.0)
+    for c in all_candidates:
+        print(f"DB : {c.database_name} | Table : {c.table_name} | Column : {c.column_name} | Confidence : {c.confidence}")
+
+    simple_candidates = [c for c in all_candidates if c.confidence >= 0.99]
+    print(f"\n--- *** --- Colonnes > 0.99 confidence : {len(simple_candidates)} --- *** ---\n")
+
+    final_candidates = validate_dependency(simple_candidates)
+    print(f"\n--- *** --- Colonnes validées comme PK simples : {len(final_candidates)} --- *** ---")
+    print(f"--- ***--- Colonnes écartées comme PK simples : {len(simple_candidates) - len(final_candidates)} --- *** ---\n")
+
+    table_with_simple_pk = set(c.table_name for c in final_candidates)
+
+    all_tables = set(c.table_name for c in all_candidates)
+    tables_without_pk = list(all_tables - table_with_simple_pk)
+    for t in tables_without_pk:
+        print(f"--- ***--- Table sans PK simple : {t} --- ***---")
+
+    composite_candidates = []
+    final_composite_candidates = []
+    if tables_without_pk:
+        composite_candidates = composite_engine.generate_composite_candidates(
+            all_columns=all_candidates,
+            tables_without_pk=tables_without_pk,
+            max_size=3,
+        )
+        print (f"--- ***--- Candidats composites générés : {len(composite_candidates)} --- ***---\n")
+        for c in composite_candidates:
+            print(f"DB : {c.database_name} | Table : {c.table_name} | Columns : {c.column_name} | Confidence : {c.confidence} | col_type : {type(c.column_name)}")
+
+        if composite_candidates :
+            final_composite_candidates = validate_dependency(composite_candidates)
+
+    print(f"\n--- *** --- Final candidats simples : {len(final_candidates)} --- *** ---")
+    final_candidates += final_composite_candidates
+    print(f"--- *** --- Final candidats ajout composites : {len(final_candidates)} --- *** ---\n")
+
+    pk_engine.store_candidates(final_candidates)
+    print("\n--- vvv ---")
+    pk_engine.print_candidates(final_candidates)
+    print("--- ^^^ ---")
 
 
 def run_join(

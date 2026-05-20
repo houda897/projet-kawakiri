@@ -34,3 +34,5 @@ code/ingestion/__pycache__/__init__.cpython-311.pyc
 code/ingestion/__pycache__/csv_loader.cpython-311.pyc
 code/profiling/__pycache__/__init__.cpython-311.pyc
 code/profiling/__pycache__/basic_profile.cpython-311.pyc
+code/__pycache__/main_validator.cpython-311.pyc
+code/inference/__pycache__/composite_key.cpython-311.pyc
