@@ -1,13 +1,13 @@
-import os
-import pandas as pd
 from core.clickhouse_manager import clickhouse_manager
 from core.logger import get_logger
 from stats.identifiability import *
+from inference.primary_key import PrimaryKeyCandidate
+from tqdm import tqdm
 
 
 logger = get_logger(__name__)
 
-def check_functional_dependency(database, table, col_A, col_B, limit_violations: int = 2):
+def check_functional_dependency(database, table, col_A, col_B, limit_violations: int = 1):
     '''Analyse if there is a dependency from column A to column B (A -> B)'''
     q_table = f"`{database}`.`{table}`"
     q_A = f"`{col_A}`"
@@ -51,3 +51,17 @@ def analyze_table_dependencies(database, table, col_name) :
             return False
 
     return True
+
+def validate_dependency(candidates_list: list[PrimaryKeyCandidate]) -> list[PrimaryKeyCandidate]:
+    new_candidates = candidates_list.copy()
+    logger.info(f"Validating functional dependencies for {len(candidates_list)} candidates...")
+    for candidate in candidates_list:
+        is_valid = analyze_table_dependencies(candidate.database_name, candidate.table_name, candidate.column_name)
+        if not is_valid:
+            #logger.info(f"Candidate {candidate.column_name} in {candidate.table_name} is not a valid primary key.")
+            new_candidates.remove(candidate)
+        else:
+            #logger.info(f"Candidate {candidate.column_name} in {candidate.table_name} is a valid primary key.")
+            continue
+    logger.info(f"Keys removed : {len(candidates_list) - len(new_candidates)}")
+    return new_candidates

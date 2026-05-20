@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import META_DB, clickhouse_manager, get_manager
 from core.schema import q_ident
 from config.scoring import IDENTIFIABILITY_THRESHOLDS, IDENTIFIABILITY_WEIGHTS
 
@@ -194,7 +194,7 @@ def get_columns_name(database, table):
     WHERE database = '{database}' AND table = '{table}'
     """
     try:
-        db_manager = clickhouse_manager()
+        db_manager = get_manager()
         df = db_manager.queryDf(query)
 
         if df.empty:
