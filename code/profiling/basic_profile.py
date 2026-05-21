@@ -5,7 +5,7 @@ import datetime
 
 from core.logger import get_logger
 from core.clickhouse_manager import CH_DB, META_DB
-from core.meta import ensure_meta_schema
+from core.meta import clear_computed_metadata, ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
 from stats.stats_computing import compute_column_stats, ensure_stats_table
 
@@ -122,6 +122,7 @@ class ProfileEngine:
         """
 
         ensure_meta_schema(self.db)
+        clear_computed_metadata(self.db)
         ensure_stats_table(self.db)
 
         profiles = []
