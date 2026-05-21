@@ -126,4 +126,22 @@ def ensure_meta_schema(client) -> None:
         """
     )
 
+COMPUTED_METADATA_TABLES = (
+    "column_profiles",
+    "column_stats",
+    "identifiability_scores",
+    "primary_key_candidates",
+    "join_candidates",
+)
+
+def clear_computed_metadata(db) -> None:
+    """
+    Clear metadata tables that are recomputed by the analysis pipeline.
+
+    Import history is preserved so source traceability remains available.
+    """
+
+    for table in COMPUTED_METADATA_TABLES:
+        db.command(f"TRUNCATE TABLE IF EXISTS {q_ident(META_DB)}.{q_ident(table)}")
+
 
