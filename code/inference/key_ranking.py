@@ -10,8 +10,8 @@ class RankedKeyCandidate:
     """
     Key candidate enriched with ranking evidence.
 
-    The ranking favors minimal keys first, then candidates with more numeric
-    attributes and stronger statistical evidence.
+    The ranking favors minimal keys first, avoids measure-like columns, then
+    prefers numeric identifiers and stronger statistical evidence.
     """
 
     database_name: str
@@ -23,6 +23,7 @@ class RankedKeyCandidate:
     uniqueness_ratio: float
     identifiability_score: float
     numeric_column_count: int
+    measure_like_column_count: int
     low_cardinality_column_count: int
     confidence: float
     rank_reason: str
@@ -51,6 +52,7 @@ class KeyRankingPolicy:
         """
 
         numeric_count = self.count_numeric_columns(column_types)
+        measure_like_count = self.count_measure_like_columns(column_types)
 
         low_cardinality_count = sum(
             1
@@ -74,11 +76,12 @@ class KeyRankingPolicy:
             uniqueness_ratio=uniqueness_ratio,
             identifiability_score=identifiability_score,
             numeric_column_count=numeric_count,
+            measure_like_column_count=measure_like_count,
             low_cardinality_column_count=low_cardinality_count,
             confidence=confidence,
             rank_reason=(
-                "rank=minimal_columns,numeric_preference,"
-                "uniqueness,completeness,identifiability"
+                "rank=minimal_columns,avoid_measure_like_columns,"
+                "numeric_preference,uniqueness,completeness,identifiability"
             ),
         )
 
@@ -94,6 +97,7 @@ class KeyRankingPolicy:
             candidates,
             key=lambda candidate: (
                 len(candidate.column_names),
+                candidate.measure_like_column_count,
                 -candidate.numeric_column_count,
                 candidate.low_cardinality_column_count,
                 -candidate.uniqueness_ratio,
@@ -121,13 +125,31 @@ class KeyRankingPolicy:
 
     @classmethod
     def count_numeric_columns(cls, column_types: tuple[str, ...]) -> int:
-        return sum(1 for column_type in column_types if cls.is_numeric_type(column_type))
+        return sum(
+            1
+            for column_type in column_types
+            if cls.is_numeric_type(column_type)
+        )
+
+    @classmethod
+    def count_measure_like_columns(cls, column_types: tuple[str, ...]) -> int:
+        return sum(
+            1
+            for column_type in column_types
+            if cls.is_measure_like_type(column_type)
+        )
 
     @classmethod
     def is_numeric_type(cls, column_type: str) -> bool:
         base_type = cls.normalize_type(column_type)
 
         return base_type.startswith(("Int", "UInt", "Float", "Decimal"))
+
+    @classmethod
+    def is_measure_like_type(cls, column_type: str) -> bool:
+        base_type = cls.normalize_type(column_type)
+
+        return base_type.startswith(("Float", "Decimal"))
 
     @staticmethod
     def normalize_type(column_type: str) -> str:
