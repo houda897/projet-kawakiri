@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.logger import get_logger
+from core.schema import q_ident
+from inference.join_candidate import JoinPrimaryKeyCandidate
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class AdjacencyEdge:
+    """
+    Directed relationship between two tables.
+
+    The edge points from the source table carrying the referencing column to the
+    target table carrying the candidate key.
+    """
+
+    source_table: str
+    target_table: str
+    source_columns: tuple[str, ...]
+    target_columns: tuple[str, ...]
+    join_success_ratio: float
+    evidence: str
+
+
+class AdjacencyMatrixEngine:
+    """
+    Build a table-level adjacency matrix from physical join evidence.
+    """
+
+    def __init__(self, db: clickhouse_manager):
+        self.db = db
+
+    def build_edges_from_join_candidates(
+        self,
+        join_candidates: list[JoinPrimaryKeyCandidate],
+    ) -> list[AdjacencyEdge]:
+        """
+        Convert column-level join candidates into table-level directed edges.
+        """
+
+        edges = []
+
+        for candidate in join_candidates:
+            edges.append(
+                AdjacencyEdge(
+                    source_table=candidate.source_table,
+                    target_table=candidate.target_table,
+                    source_columns=(candidate.source_column,),
+                    target_columns=(candidate.target_column,),
+                    join_success_ratio=candidate.join_success_ratio,
+                    evidence="physical_join_coverage",
+                )
+            )
+
+        return edges
+
+    def build_matrix(
+        self,
+        edges: list[AdjacencyEdge],
+    ) -> dict[str, dict[str, float]]:
+        """
+        Build a sparse adjacency matrix indexed by source and target table.
+
+        When several edges exist between the same pair of tables, the strongest
+        join coverage is kept.
+        """
+
+        matrix: dict[str, dict[str, float]] = {}
+
+        for edge in edges:
+            matrix.setdefault(edge.source_table, {})
+
+            current_score = matrix[edge.source_table].get(edge.target_table, 0.0)
+            matrix[edge.source_table][edge.target_table] = max(
+                current_score,
+                edge.join_success_ratio,
+            )
+
+        return matrix
+
+    def store_edges(self, edges: list[AdjacencyEdge]) -> None:
+        """
+        Store adjacency edges in the metadata database.
+        """
+
+        if not edges:
+            return
+
+        rows = [
+            [
+                edge.source_table,
+                edge.target_table,
+                ",".join(edge.source_columns),
+                ",".join(edge.target_columns),
+                edge.join_success_ratio,
+                edge.evidence,
+            ]
+            for edge in edges
+        ]
+
+        self.db.insert(
+            f"{META_DB}.adjacency_edges",
+            rows,
+            column_names=[
+                "source_table",
+                "target_table",
+                "source_columns",
+                "target_columns",
+                "join_success_ratio",
+                "evidence",
+            ],
+        )
+
+    @staticmethod
+    def print_matrix(matrix: dict[str, dict[str, float]]) -> None:
+        """
+        Print the adjacency matrix as readable table-to-table links.
+        """
+
+        if not matrix:
+            logger.info("No adjacency edges found.")
+            return
+
+        for source_table, targets in matrix.items():
+            for target_table, score in targets.items():
+                logger.info("%s -> %s | score=%s", source_table, target_table, score)
+    
+    @staticmethod
+    def print_binary_matrix(matrix: dict[str, dict[str, float]]) -> None:
+        """
+        Print the adjacency matrix as a binary table.
+
+        Rows are source tables, columns are target tables. A value of 1 means that a
+        directed relationship exists from the row table to the column table.
+        """
+
+        if not matrix:
+            logger.info("No adjacency edges found.")
+            return
+
+        tables = sorted(
+            set(matrix.keys())
+            | {
+                target_table
+                for targets in matrix.values()
+                for target_table in targets.keys()
+            }
+        )
+
+        column_width = max(12, max(len(table) for table in tables) + 2)
+
+        header = "".ljust(column_width)
+
+        for table in tables:
+            header += table[: column_width - 1].ljust(column_width)
+
+        logger.info("Adjacency binary matrix")
+        logger.info(header)
+
+        for source_table in tables:
+            row = source_table[: column_width - 1].ljust(column_width)
+
+            for target_table in tables:
+                if source_table == target_table:
+                    value = "0"
+                else:
+                    value = "1" if matrix.get(source_table, {}).get(target_table, 0.0) > 0 else "0"
+
+                row += value.ljust(column_width)
+
+            logger.info(row)
+

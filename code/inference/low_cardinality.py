@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.schema import q_ident
@@ -44,7 +45,7 @@ class LowCardinalityAnalyzer:
         Find columns whose distinct values are small relative to table size.
         """
 
-        parameters = {
+        parameters: dict[str, Any] = {
             "max_uniqueness_ratio": max_uniqueness_ratio,
             "min_rows": min_rows,
         }

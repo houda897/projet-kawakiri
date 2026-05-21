@@ -131,11 +131,11 @@ class PrimaryKeyEngine:
             uniqueness_ratio=candidate.uniqueness_ratio,
             identifiability_score=candidate.identifiability_score,
             confidence=candidate.confidence,
-            reason=(
-                "hard_rule=unique_and_complete; "
-                "confidence=0.7*uniqueness_ratio+0.3*identifiability_score; "
+           reason=(
+               "hard_rule=unique_and_complete; "
+                "confidence=weighted_uniqueness_and_identifiability; "
                 f"ranking={candidate.rank_reason}"
-            ),
+                ),
         )
 
     def store_candidates(
