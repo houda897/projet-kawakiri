@@ -1,4 +1,5 @@
 product_id;product_name;category;brand
-10;Kawa Sensor;Hardware;Kawakiri
-11;Kawa Lens;Hardware;Kawakiri
-12;Decision Pack;Software;Dotei
+10;Laptop;Electronics;Nova
+11;Phone;Electronics;Nova
+12;Desk;Furniture;Casa
+13;Chair;Furniture;Casa
