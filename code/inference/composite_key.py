@@ -46,12 +46,12 @@ class CompositeKeyEngine:
                     current_combo.append(table_cols[size - 1])
                 
                 combo_names = [c.column_name for c in current_combo]
-                print(f"Testing combo for {table} (Size {size}): {combo_names}")
+                logger.info(f"Testing combo for {table} (Size {size}): {combo_names}")
                 
                 is_valid = check_functional_dependency(database_name, table, combo_names, self.db)
                 
                 if is_valid:
-                    logger.info(f"✅ Clé composite trouvée pour {table} : {combo_names}")
+                    logger.info(f"Composite key found {table} : {combo_names}")
                     
                     valid_composite_candidates.append(PrimaryKeyCandidate(
                         database_name=database_name,
@@ -61,7 +61,6 @@ class CompositeKeyEngine:
                         rows=current_combo[0].rows,
                         null_ratio=0.0,
                         uniqueness_ratio=1.0, 
-                        entropy_ratio=sum(c.entropy_ratio for c in current_combo) / len(current_combo),
                         identifiability_score=sum(c.identifiability_score for c in current_combo) / len(current_combo),
                         confidence=sum(c.confidence for c in current_combo) / len(current_combo),
                         reason=f"Composite PK (Size {len(combo_names)}) validated by DF"
@@ -70,3 +69,5 @@ class CompositeKeyEngine:
                     break 
                     
         return valid_composite_candidates
+    
+    
