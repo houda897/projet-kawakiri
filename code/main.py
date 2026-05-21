@@ -1,5 +1,4 @@
 import argparse
-
 from core.logger import get_logger
 from core.clickhouse_manager import get_manager
 from inference.join_candidate import JoinEngine
@@ -7,6 +6,9 @@ from inference.primary_key import PrimaryKeyEngine
 from ingestion.csv_loader import CsvIngestionEngine
 from profiling.basic_profile import ProfileEngine
 from stats.identifiability import IdentifiabilityEngine
+from stats.functional_dependency import validate_dependency
+from inference.composite_key import CompositeKeyEngine
+from inference.primary_to_composite import fetch_identifiability_scores, process_composite_candidates
 
 logger = get_logger(__name__)
 
@@ -62,11 +64,13 @@ def run_identifiability() -> None:
 
 def run_pk_inference() -> None:
     db = get_manager()
-    engine = PrimaryKeyEngine(db)
+    pk_engine = PrimaryKeyEngine(db)
+    composite_engine = CompositeKeyEngine(db)
 
-    candidates = engine.infer_candidates()
-    engine.store_candidates(candidates)
-    engine.print_candidates(candidates)
+    final_candidates = process_composite_candidates(db, pk_engine, composite_engine)
+
+    pk_engine.store_candidates(final_candidates)
+    pk_engine.print_candidates(final_candidates)
 
 
 def run_join(
