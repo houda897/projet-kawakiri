@@ -6,9 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from core.clickhouse_manager import clickhouse_manager
-
-from core.clickhouse_manager import CH_DB, META_DB
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
 from core.schema import q_ident
@@ -72,6 +70,15 @@ class CsvIngestionEngine:
         sample_size: int = 5000,
         if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> dict:
+        """
+        Import a single CSV file into ClickHouse.
+
+        Steps: detect delimiter → sample rows → infer types → validate a few rows
+        → create table → insert in batches → log metadata.
+
+        Returns a dict matching the IngestionResult dataclass fields.
+        Raises an exception (and logs it) if anything fails after the table is created.
+        """
         path = Path(csv_path)
         table = table_name or self.clean_identifier(path.stem)
 

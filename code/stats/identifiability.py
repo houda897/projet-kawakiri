@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
-from core.schema import q_ident
 from config.scoring import IDENTIFIABILITY_THRESHOLDS, IDENTIFIABILITY_WEIGHTS
+from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.logger import get_logger
+from core.schema import q_ident
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -52,6 +55,12 @@ class IdentifiabilityEngine:
         self.validate_weights()
 
     def validate_weights(self) -> None:
+        """
+        Ensure the three weights sum to 1.
+
+        Raises ValueError if the sum deviates by more than 0.0001, which would
+        silently bias every identifiability score computed by this engine.
+        """
         total = (
             self.weight_uniqueness
             + self.weight_entropy
@@ -122,6 +131,12 @@ class IdentifiabilityEngine:
         return results
 
     def diagnose(self, score: float) -> str:
+        """
+        Convert a numeric identifiability score into a human-readable diagnostic label.
+
+        Thresholds are configured in config/scoring.py so they can be adjusted
+        without touching the engine logic.
+        """
         if score >= self.threshold_high:
             return "HIGH_IDENTIFIABILITY"
 
@@ -132,8 +147,14 @@ class IdentifiabilityEngine:
             return "LOW_IDENTIFIABILITY"
 
         return "VERY_LOW_IDENTIFIABILITY"
-    
+
     def store_scores(self, results: list[IdentifiabilityResult]) -> None:
+        """
+        Persist identifiability scores into the metadata table.
+
+        Does nothing if the list is empty. Scores are later read by
+        PrimaryKeyEngine to rank key candidates.
+        """
         if not results:
             return
 
@@ -168,8 +189,9 @@ class IdentifiabilityEngine:
 
     @staticmethod
     def print_scores(results: list[IdentifiabilityResult]) -> None:
+        """Log all identifiability scores grouped by table."""
         if not results:
-            print("No identifiability scores found.")
+            logger.info("No identifiability scores found.")
             return
 
         current_table = None
@@ -177,32 +199,11 @@ class IdentifiabilityEngine:
         for result in results:
             if result.table_name != current_table:
                 current_table = result.table_name
-                print(f"\n=== {result.table_name} ===")
+                logger.info("=== %s ===", result.table_name)
 
-            print(
-                f"{result.column_name} | "
-                f"score={result.identifiability_score} | "
-                f"diagnostic={result.diagnostic}"
+            logger.info(
+                "%s | score=%s | diagnostic=%s",
+                result.column_name,
+                result.identifiability_score,
+                result.diagnostic,
             )
-
-def get_columns_name(database, table):
-    """Get columns name for a given table
-    Return a list of column name"""
-    query = f"""
-    SELECT name
-    FROM system.columns
-    WHERE database = '{database}' AND table = '{table}'
-    """
-    try:
-        db_manager = clickhouse_manager()
-        df = db_manager.queryDf(query)
-
-        if df.empty:
-            print(f"No columns found for {database}.{table}")
-            return []
-
-        columns = df['name'].tolist()
-        return columns
-    except Exception as e:
-        print(f"Error during columns recuperation for {table}: {e}")
-        return []
