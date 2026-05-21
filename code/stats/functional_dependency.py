@@ -1,49 +1,50 @@
-from core.clickhouse_manager import get_manager
+from core.clickhouse_manager import clickhouse_manager
 from core.logger import get_logger
-from core.schema import get_columns_name
+from inference.primary_key import PrimaryKeyCandidate
+
 
 logger = get_logger(__name__)
 
-
-def check_functional_dependency(database, table, col_A, col_B, limit_violations: int = 2):
-    """Check whether column A functionally determines column B (A -> B)."""
+def check_functional_dependency(database: str, table: str, pk_candidate: str | list[str], db_manager: clickhouse_manager) -> bool:
+    '''
+    Check if the given candidate (single column or composite) satisfies the functional dependency by ensuring no duplicates exist.
+    '''
     q_table = f"`{database}`.`{table}`"
-    q_A = f"`{col_A}`"
-    q_B = f"`{col_B}`"
+
+    if isinstance(pk_candidate, list):
+        q_cols = ", ".join("`"+col+"`" for col in pk_candidate)
+    else:
+        q_cols = pk_candidate 
 
     query_check = f"""
-    SELECT
-        {q_A} AS valeur_A,
-        uniqExact({q_B}) AS nb_valeurs_B_differentes
-    FROM {q_table}
-    GROUP BY valeur_A
-    HAVING nb_valeurs_B_differentes > 1
-    ORDER BY nb_valeurs_B_differentes DESC
-    LIMIT {limit_violations}
+    WITH key_research AS (
+        SELECT MD5(concat({q_cols})) AS col_concat
+        FROM {q_table}
+    )
+    SELECT count(1), col_concat
+    FROM key_research
+    GROUP BY col_concat 
+    HAVING count(1) > 1
     """
 
-    db = get_manager()
-    df_violations = db.queryDf(query_check)
+    df_violations = db_manager.queryDf(query_check)
+        
+    return df_violations.empty
 
-    if df_violations.empty:
-        return True
-    else:
-        return False
+def validate_dependency(candidates_list: list[PrimaryKeyCandidate]) -> list[PrimaryKeyCandidate]:
+    new_candidates = candidates_list.copy()
+    logger.info(f"Validating functional dependencies for {len(candidates_list)} candidates...")
+    db_manager = clickhouse_manager()
 
+    for candidate in candidates_list:
 
-def analyze_table_dependencies(database, table, col_name):
-    """
-    Check whether col_name has a functional dependency with every other column.
-    Returns True if col_name is a valid primary-key candidate, False otherwise.
-    """
-    db = get_manager()
-    all_columns = get_columns_name(db, database, table)
-    other_columns = [col for col in all_columns if col != col_name]
+        is_valid = check_functional_dependency(candidate.database_name, candidate.table_name, candidate.column_name, db_manager)
 
-    for target_column in other_columns:
-        if check_functional_dependency(database, table, col_name, target_column):
-            continue
+        if not is_valid:
+            #logger.info(f"Candidate {candidate.column_name} in {candidate.table_name} is not a valid primary key : X")
+            new_candidates.remove(candidate)
         else:
-            return False
-
-    return True
+            #logger.info(f"Candidate {candidate.column_name} in {candidate.table_name} is a valid primary key : O")
+            continue
+    logger.info(f"Keys removed : {len(candidates_list) - len(new_candidates)}")
+    return new_candidates
