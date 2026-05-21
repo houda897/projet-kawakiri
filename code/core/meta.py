@@ -88,7 +88,7 @@ def ensure_meta_schema(client) -> None:
         ORDER BY (database_name, table_name, column_name, profiled_at)
         """)
     # Store mathematically inferred simple primary-key candidates.
-
+    
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
@@ -126,7 +126,6 @@ def ensure_meta_schema(client) -> None:
         """
     )
 
-    # Statistiques avancées calculées par stats_computing.py (entropie, skewness, etc.)
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_stats
         (

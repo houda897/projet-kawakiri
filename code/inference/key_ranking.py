@@ -121,17 +121,14 @@ class KeyRankingPolicy:
 
     @classmethod
     def count_numeric_columns(cls, column_types: tuple[str, ...]) -> int:
-        """Count how many types in the tuple are numeric (Int, UInt, Float, Decimal)."""
         return sum(1 for column_type in column_types if cls.is_numeric_type(column_type))
 
     @classmethod
     def is_numeric_type(cls, column_type: str) -> bool:
-        """Return True if the base ClickHouse type is numeric after stripping Nullable."""
         base_type = cls.normalize_type(column_type)
 
         return base_type.startswith(("Int", "UInt", "Float", "Decimal"))
 
     @staticmethod
     def normalize_type(column_type: str) -> str:
-        """Strip the Nullable() wrapper from a ClickHouse type string."""
         return column_type.removeprefix("Nullable(").removesuffix(")")
