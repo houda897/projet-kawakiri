@@ -75,29 +75,25 @@ def run_pk_inference() -> None:
 
     final_candidates = validate_dependency(simple_candidates)
     print(f"\n--- *** --- Colonnes validées comme PK simples : {len(final_candidates)} --- *** ---")
-    print(f"--- ***--- Colonnes écartées comme PK simples : {len(simple_candidates) - len(final_candidates)} --- *** ---\n")
+    print(f"--- *** --- Colonnes écartées comme PK simples : {len(simple_candidates) - len(final_candidates)} --- *** ---\n")
 
     table_with_simple_pk = set(c.table_name for c in final_candidates)
 
     all_tables = set(c.table_name for c in all_candidates)
     tables_without_pk = list(all_tables - table_with_simple_pk)
     for t in tables_without_pk:
-        print(f"--- ***--- Table sans PK simple : {t} --- ***---")
+        print(f"--- *** --- Table sans PK simple : {t} --- *** ---")
 
     composite_candidates = []
     final_composite_candidates = []
     if tables_without_pk:
         composite_candidates = composite_engine.generate_composite_candidates(
             all_columns=all_candidates,
-            tables_without_pk=tables_without_pk,
-            max_size=3,
+            tables_without_pk=tables_without_pk
         )
-        print (f"--- ***--- Candidats composites générés : {len(composite_candidates)} --- ***---\n")
+        print (f"--- *** --- Candidats composites générés : {len(composite_candidates)} --- *** ---\n")
         for c in composite_candidates:
             print(f"DB : {c.database_name} | Table : {c.table_name} | Columns : {c.column_name} | Confidence : {c.confidence} | col_type : {type(c.column_name)}")
-
-        if composite_candidates :
-            final_composite_candidates = validate_dependency(composite_candidates)
 
     print(f"\n--- *** --- Final candidats simples : {len(final_candidates)} --- *** ---")
     final_candidates += final_composite_candidates
