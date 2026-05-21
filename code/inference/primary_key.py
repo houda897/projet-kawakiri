@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from core.logger import get_logger
 from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.logger import get_logger
 from core.schema import q_ident
+
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from inference.low_cardinality import LowCardinalityAnalyzer
 
@@ -141,6 +142,12 @@ class PrimaryKeyEngine:
         self,
         candidates: list[PrimaryKeyCandidate],
     ) -> None:
+        """
+        Persist primary-key candidates into the metadata table.
+
+        Does nothing when the list is empty. Stored candidates are later read
+        by JoinEngine to evaluate FK relationships.
+        """
         if not candidates:
             return
 
@@ -179,6 +186,7 @@ class PrimaryKeyEngine:
 
     @staticmethod
     def print_candidates(candidates: list[PrimaryKeyCandidate]) -> None:
+        """Log all primary-key candidates grouped by table."""
         if not candidates:
             logger.info("No primary-key candidates found.")
             return
@@ -201,4 +209,5 @@ class PrimaryKeyEngine:
 
 
 def candidates_to_dicts(candidates: list[PrimaryKeyCandidate]) -> list[dict]:
+    """Serialize a list of PrimaryKeyCandidate objects to plain dicts."""
     return [asdict(candidate) for candidate in candidates]

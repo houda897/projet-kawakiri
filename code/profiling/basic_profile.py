@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import datetime
+from dataclasses import dataclass
 
-from core.logger import get_logger
 from core.clickhouse_manager import CH_DB, META_DB
+from core.logger import get_logger
 from core.meta import clear_computed_metadata, ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
-from stats.stats_computing import compute_column_stats, ensure_stats_table
-
+from stats.stats_computing import compute_column_stats
 
 logger = get_logger(__name__)
 
@@ -16,11 +15,10 @@ logger = get_logger(__name__)
 @dataclass
 class ColumnProfile:
     """
-    Profil statistique d'une colonne ClickHouse.
+    Statistical profile of a ClickHouse column.
 
-    Stocke les métriques de complétude, cardinalité, unicité et valeurs
-    limites utilisées par les étapes d'inférence aval (détection de clés,
-    séparation faits/dimensions).
+    Stores completeness, cardinality, uniqueness, and boundary metrics used
+    by downstream inference steps (key detection, fact/dimension separation).
     """
 
     database_name: str
@@ -38,10 +36,24 @@ class ColumnProfile:
 
 
 class ProfileEngine:
+    """
+    Compute and store basic column profiles for all tables in the configured database.
+
+    A profile captures completeness, cardinality, uniqueness, and value range for
+    each column. These metrics feed the identifiability scoring and primary-key
+    inference steps.
+    """
+
     def __init__(self, db):
         self.db = db
 
     def compute_basic_profile_for_column(self, table: str, col: Col) -> ColumnProfile:
+        """
+        Run a single SQL query to collect row counts, null counts, distinct counts,
+        and boundary values for one column.
+
+        All ratios are rounded to 6 decimal places before being returned.
+        """
         table_ref = f"{q_ident(CH_DB)}.{q_ident(table)}"
         col_ref = q_ident(col.name)
 
@@ -76,6 +88,12 @@ class ProfileEngine:
         )
 
     def insert_column_profiles(self, profiles: list[ColumnProfile]) -> None:
+        """
+        Persist a batch of column profiles into the metadata table.
+
+        Does nothing if the list is empty, so callers do not need to guard
+        against empty batches.
+        """
         if not profiles:
             return
 
@@ -123,7 +141,6 @@ class ProfileEngine:
 
         ensure_meta_schema(self.db)
         clear_computed_metadata(self.db)
-        ensure_stats_table(self.db)
 
         profiles = []
         run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

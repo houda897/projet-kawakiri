@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.scoring import PK_WEIGHTS
+
 
 @dataclass
 class RankedKeyCandidate:
@@ -57,7 +59,8 @@ class KeyRankingPolicy:
         )
 
         confidence = round(
-            0.7 * uniqueness_ratio + 0.3 * identifiability_score,
+            PK_WEIGHTS["uniqueness"] * uniqueness_ratio
+            + PK_WEIGHTS["identifiability"] * identifiability_score,
             6,
         )
 

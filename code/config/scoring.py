@@ -9,4 +9,8 @@ IDENTIFIABILITY_THRESHOLDS = {
     "medium": 0.5,
     "low": 0.2,
 }
- 
+
+PK_WEIGHTS = {
+    "uniqueness": 0.7,
+    "identifiability": 0.3,
+}

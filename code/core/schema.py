@@ -14,10 +14,12 @@ class Col:
 
 
 def q_ident(x: str) -> str:
+    """Wrap a ClickHouse identifier in backticks and escape any existing backticks."""
     return "`" + x.replace("`", "``") + "`"
 
 
-def list_tables(client) -> list[str]:
+def list_tables(client, database: str = CH_DB) -> list[str]:
+    """Return the names of all regular (non-view) tables in the given database."""
     rows = client.query(
         """
         SELECT name
@@ -26,12 +28,13 @@ def list_tables(client) -> list[str]:
           AND engine NOT IN ('View', 'MaterializedView')
         ORDER BY name
         """,
-        parameters={"db": CH_DB},
+        parameters={"db": database},
     ).result_rows
     return [r[0] for r in rows]
 
 
-def list_columns(client, table: str) -> list[Col]:
+def list_columns(client, table: str, database: str = CH_DB) -> list[Col]:
+    """Return the columns of a table, excluding complex types (Array, Map, Tuple, …)."""
     rows = client.query(
         """
         SELECT name, type
@@ -39,7 +42,7 @@ def list_columns(client, table: str) -> list[Col]:
         WHERE database = %(db)s AND table = %(t)s
         ORDER BY position
         """,
-        parameters={"db": CH_DB, "t": table},
+        parameters={"db": database, "t": table},
     ).result_rows
 
     cols = []
@@ -49,3 +52,16 @@ def list_columns(client, table: str) -> list[Col]:
         cols.append(Col(name=name, ch_type=typ))
     return cols
 
+
+def get_columns_name(client, database: str, table: str) -> list[str]:
+    """Return the list of column names for a given table."""
+    rows = client.query(
+        """
+        SELECT name
+        FROM system.columns
+        WHERE database = %(db)s AND table = %(t)s
+        ORDER BY position
+        """,
+        parameters={"db": database, "t": table},
+    ).result_rows
+    return [r[0] for r in rows]

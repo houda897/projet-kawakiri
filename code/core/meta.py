@@ -126,6 +126,27 @@ def ensure_meta_schema(client) -> None:
         """
     )
 
+    client.command(f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_stats
+        (
+            run_ts DateTime,
+            database_name String,
+            table_name String,
+            column_name String,
+            column_type String,
+            rows UInt64,
+            non_null_rows UInt64,
+            distinct_count UInt64,
+            entropy_ratio Float64,
+            sparsity Float64,
+            variation_coefficient Float64,
+            skewness_score Float64
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, table_name, column_name, run_ts)
+        """)
+
+
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
     "column_stats",
