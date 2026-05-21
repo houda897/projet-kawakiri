@@ -88,6 +88,7 @@ def ensure_meta_schema(client) -> None:
         ORDER BY (database_name, table_name, column_name, profiled_at)
         """)
     # Store mathematically inferred simple primary-key candidates.
+    
     client.command(f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
@@ -98,6 +99,7 @@ def ensure_meta_schema(client) -> None:
             rows UInt64,
             null_ratio Float64,
             uniqueness_ratio Float64,
+            identifiability_score Float64,
             confidence Float64,
             reason String,
             created_at DateTime DEFAULT now()
@@ -123,5 +125,44 @@ def ensure_meta_schema(client) -> None:
         ORDER BY (database_name, table_name, column_name, created_at)
         """
     )
+
+    client.command(f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_stats
+        (
+            run_ts DateTime,
+            database_name String,
+            table_name String,
+            column_name String,
+            column_type String,
+            rows UInt64,
+            non_null_rows UInt64,
+            distinct_count UInt64,
+            entropy_ratio Float64,
+            sparsity Float64,
+            variation_coefficient Float64,
+            skewness_score Float64
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, table_name, column_name, run_ts)
+        """)
+
+
+COMPUTED_METADATA_TABLES = (
+    "column_profiles",
+    "column_stats",
+    "identifiability_scores",
+    "primary_key_candidates",
+    "join_candidates",
+)
+
+def clear_computed_metadata(db) -> None:
+    """
+    Clear metadata tables that are recomputed by the analysis pipeline.
+
+    Import history is preserved so source traceability remains available.
+    """
+
+    for table in COMPUTED_METADATA_TABLES:
+        db.command(f"TRUNCATE TABLE IF EXISTS {q_ident(META_DB)}.{q_ident(table)}")
 
 

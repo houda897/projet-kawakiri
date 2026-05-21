@@ -3,9 +3,8 @@ from pathlib import Path
 
 import clickhouse_connect
 from clickhouse_connect.driver import Client
-from dotenv import load_dotenv
-
 from core.logger import get_logger
+from dotenv import load_dotenv
 
 logger = get_logger(__name__)
 
@@ -41,6 +40,7 @@ class clickhouse_manager:
         self.connect()
 
     def connect(self) -> Client:
+        """Open a ClickHouse connection and cache it. Returns the cached client on subsequent calls."""
         if self.client is not None:
             return self.client
 
@@ -58,18 +58,21 @@ class clickhouse_manager:
             raise ConnectionError(f"ClickHouse connection failed: {exc}") from exc
 
     def query(self, sql: str, parameters: dict | None = None):
+        """Execute a SELECT query and return the result object."""
         if parameters is None:
             return self.connect().query(sql)
 
         return self.connect().query(sql, parameters=parameters)
 
     def queryDf(self, sql: str, parameters: dict | None = None):
+        """Execute a SELECT query and return results as a pandas DataFrame."""
         if parameters is None:
             return self.connect().query_df(sql)
 
         return self.connect().query_df(sql, parameters=parameters)
 
     def command(self, sql: str, parameters: dict | None = None):
+        """Execute a DDL or INSERT/TRUNCATE statement that does not return rows."""
         if parameters is None:
             return self.connect().command(sql)
 
@@ -81,6 +84,7 @@ class clickhouse_manager:
         data: list,
         column_names: list[str] | None = None,
     ):
+        """Insert rows into a ClickHouse table, optionally specifying column names."""
         if column_names is None:
             return self.connect().insert(table, data)
 
@@ -94,6 +98,7 @@ class clickhouse_manager:
 
     @classmethod
     def get_instance(cls) -> "clickhouse_manager":
+        """Return the shared singleton instance, creating it on first call."""
         if cls._instance is None:
             cls._instance = cls()
 
@@ -101,4 +106,5 @@ class clickhouse_manager:
 
 
 def get_manager() -> clickhouse_manager:
+    """Module-level shorthand for clickhouse_manager.get_instance()."""
     return clickhouse_manager.get_instance()

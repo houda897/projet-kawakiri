@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 from core.schema import Col
-from stats.stats_computing import compute_column_stats, ensure_stats_table, is_numeric_type
+from stats.stats_computing import compute_column_stats, is_numeric_type
 
 
 def test_is_numeric_type_detects_numeric_types() -> None:
@@ -13,19 +13,19 @@ def test_is_numeric_type_detects_numeric_types() -> None:
     assert is_numeric_type("Date") is False
 
 
-def test_ensure_stats_table_creates_column_stats_table() -> None:
+def test_ensure_meta_schema_cree_la_table_column_stats() -> None:
+    """La table column_stats doit être créée dans ensure_meta_schema, pas dans stats_computing."""
+    from core.meta import ensure_meta_schema
     db = MagicMock()
 
-    ensure_stats_table(db)
+    ensure_meta_schema(db)
 
-    db.command.assert_called_once()
-    sql = db.command.call_args[0][0]
-
-    assert "CREATE TABLE IF NOT EXISTS" in sql
-    assert "column_stats" in sql
-    assert "entropy_ratio" in sql
-    assert "variation_coefficient" in sql
-    assert "skewness_score" in sql
+    # ensure_meta_schema appelle command() plusieurs fois (une par table)
+    assert db.command.call_count > 0
+    # Vérifie qu'au moins un appel crée la table column_stats
+    all_sql = " ".join(str(call) for call in db.command.call_args_list)
+    assert "column_stats" in all_sql
+    assert "entropy_ratio" in all_sql
 
 
 def test_compute_column_stats_numeric_column_contains_numeric_metrics() -> None:

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.logger import get_logger
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.logger import get_logger
 from core.schema import q_ident
+
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -50,6 +51,7 @@ class JoinEngine:
         source_table: str,
         source_column: str,
         primary_key: PrimaryKeyCandidate,
+        limit_rows: int | None = None,
     ) -> JoinPrimaryKeyCandidate:
         """
         Measure whether a source column is covered by a primary-key candidate.
@@ -60,12 +62,15 @@ class JoinEngine:
         source_col = q_ident(source_column)
         target_col = q_ident(primary_key.column_name)
 
+        limit_clause = f"LIMIT {limit_rows}" if limit_rows is not None else ""
+
         sql = f"""
         WITH
             source_values AS (
                 SELECT {source_col} AS value
                 FROM {source_ref}
                 WHERE {source_col} IS NOT NULL
+                {limit_clause}
             ),
             target_values AS (
                 SELECT DISTINCT {target_col} AS value
@@ -105,6 +110,12 @@ class JoinEngine:
         target_column: str,
         primary_keys: list[PrimaryKeyCandidate],
     ) -> JoinPrimaryKeyCandidate:
+        """
+        Evaluate a join between a source column and a named target key.
+
+        Looks up the PrimaryKeyCandidate from the provided list, then delegates
+        to evaluate_join_to_primary_key.
+        """
         primary_key = self.find_primary_key(
             primary_keys=primary_keys,
             target_table=target_table,
@@ -123,6 +134,12 @@ class JoinEngine:
         target_table: str,
         target_column: str,
     ) -> PrimaryKeyCandidate:
+        """
+        Return the PrimaryKeyCandidate that matches table and column names.
+
+        Raises ValueError if no match is found, which means profiling and
+        primary-key inference must be run before calling this method.
+        """
         for primary_key in primary_keys:
             if primary_key.table_name == target_table and primary_key.column_name == target_column:
                 return primary_key
@@ -133,6 +150,11 @@ class JoinEngine:
         )
 
     def load_source_columns(self) -> list[SourceColumn]:
+        """
+        Load all profiled columns that are eligible foreign-key candidates.
+
+        Excludes columns with 100% nulls and internal columns prefixed with '__'.
+        """
         sql = f"""
         SELECT
             table_name,
@@ -160,6 +182,16 @@ class JoinEngine:
         primary_keys: list[PrimaryKeyCandidate],
         min_success_ratio: float = 0.95,
     ) -> list[JoinPrimaryKeyCandidate]:
+        """
+        Discover all foreign-key relationships in the database.
+
+        For each profiled column, tests whether it is covered by any known
+        primary key using a LEFT JOIN. Only pairs with a join success ratio
+        above min_success_ratio are kept.
+
+        This is the main entry point for building the adjacency matrix used
+        to infer the star-schema topology.
+        """
         source_columns = self.load_source_columns()
         candidates = []
 
@@ -180,40 +212,66 @@ class JoinEngine:
         return candidates
 
     @staticmethod
+    def _clean_type(ch_type: str) -> str:
+        """Strip Nullable() wrapper to compare base physical types."""
+        return ch_type.removeprefix("Nullable(").removesuffix(")")
+
+    @classmethod
     def should_skip_pair(
+        cls,
         source: SourceColumn,
         primary_key: PrimaryKeyCandidate,
     ) -> bool:
+        """
+        Return True if this source / primary-key pair cannot be a valid FK relationship.
+
+        A pair is skipped when the source and target belong to the same table,
+        or when their base ClickHouse types are incompatible (e.g. String vs Int64).
+        Nullable wrappers are stripped before comparing types.
+        """
         same_table = source.table_name == primary_key.table_name
-        incompatible_type = source.column_type != primary_key.column_type
+
+        source_base = cls._clean_type(source.column_type)
+        target_base = cls._clean_type(primary_key.column_type)
+        incompatible_type = source_base != target_base
 
         return same_table or incompatible_type
 
     @staticmethod
     def print_result(result: JoinPrimaryKeyCandidate) -> None:
-        logger.info(
-            "%s.%s -> %s.%s",
-            result.source_table,
-            result.source_column,
-            result.target_table,
-            result.target_column,
-        )
-        logger.info("Source non-null rows : %s", result.source_non_null_rows)
-        logger.info("Matched rows         : %s", result.matched_rows)
-        logger.info("Join success ratio   : %s", result.join_success_ratio)
+        log_join_result(result)
 
     @staticmethod
     def print_candidates(candidates: list[JoinPrimaryKeyCandidate]) -> None:
-        if not candidates:
-            logger.info("No join candidates found.")
-            return
+        log_join_candidates(candidates)
 
-        for candidate in candidates:
-            logger.info(
-                "%s.%s -> %s.%s | ratio=%s",
-                candidate.source_table,
-                candidate.source_column,
-                candidate.target_table,
-                candidate.target_column,
-                candidate.join_success_ratio,
-            )
+
+def log_join_result(result: JoinPrimaryKeyCandidate) -> None:
+    """Log the result of a single join evaluation."""
+    logger.info(
+        "%s.%s -> %s.%s",
+        result.source_table,
+        result.source_column,
+        result.target_table,
+        result.target_column,
+    )
+    logger.info("Source non-null rows : %s", result.source_non_null_rows)
+    logger.info("Matched rows         : %s", result.matched_rows)
+    logger.info("Join success ratio   : %s", result.join_success_ratio)
+
+
+def log_join_candidates(candidates: list[JoinPrimaryKeyCandidate]) -> None:
+    """Log all join candidates found during inference."""
+    if not candidates:
+        logger.info("No join candidates found.")
+        return
+
+    for candidate in candidates:
+        logger.info(
+            "%s.%s -> %s.%s | ratio=%s",
+            candidate.source_table,
+            candidate.source_column,
+            candidate.target_table,
+            candidate.target_column,
+            candidate.join_success_ratio,
+        )
