@@ -58,7 +58,6 @@ def enrich_edges_with_semantics(edges: list[AdjacencyEdge]) -> list[AdjacencyEdg
     enriched_edges = []
     
     for edge in edges:
-        # TODO : À adapter pour des clés composites de jointure
         column_pairs = list(zip(edge.source_columns, edge.target_columns))
         
         if column_pairs:
@@ -75,7 +74,6 @@ def enrich_edges_with_semantics(edges: list[AdjacencyEdge]) -> list[AdjacencyEdg
             (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 
             6
         )
-        # TODO : Label à modifier, voir mardi
         if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
             evidence_label = "CONFIRMED"
         elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
