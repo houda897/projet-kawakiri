@@ -24,6 +24,7 @@ class AdjacencyEdge:
     source_columns: tuple[str, ...]
     target_columns: tuple[str, ...]
     join_success_ratio: float
+    hybrid_score: float | None
     evidence: str
 
 
@@ -53,6 +54,7 @@ class AdjacencyMatrixEngine:
                     source_columns=(candidate.source_column,),
                     target_columns=(candidate.target_column,),
                     join_success_ratio=candidate.join_success_ratio,
+                    hybrid_score=None,
                     evidence="physical_join_coverage",
                 )
             )
@@ -133,10 +135,9 @@ class AdjacencyMatrixEngine:
     @staticmethod
     def print_binary_matrix(matrix: dict[str, dict[str, float]]) -> None:
         """
-        Print the adjacency matrix as a binary table.
+        Print the adjacency matrix as a compact binary table.
 
-        Rows are source tables, columns are target tables. A value of 1 means that a
-        directed relationship exists from the row table to the column table.
+        Long table names are replaced by aliases to keep the output readable.
         """
 
         if not matrix:
@@ -152,18 +153,25 @@ class AdjacencyMatrixEngine:
             }
         )
 
-        column_width = max(12, max(len(table) for table in tables) + 2)
+        aliases = {
+            table: f"T{index + 1}"
+            for index, table in enumerate(tables)
+        }
 
-        header = "".ljust(column_width)
+        alias_width = max(5, max(len(alias) for alias in aliases.values()) + 2)
 
+        lines = []
+        lines.append("Adjacency binary matrix")
+        lines.append("")
+
+        header = "".ljust(alias_width)
         for table in tables:
-            header += table[: column_width - 1].ljust(column_width)
+            header += aliases[table].center(alias_width)
 
-        logger.info("Adjacency binary matrix")
-        logger.info(header)
+        lines.append(header)
 
         for source_table in tables:
-            row = source_table[: column_width - 1].ljust(column_width)
+            row = aliases[source_table].ljust(alias_width)
 
             for target_table in tables:
                 if source_table == target_table:
@@ -171,7 +179,15 @@ class AdjacencyMatrixEngine:
                 else:
                     value = "1" if matrix.get(source_table, {}).get(target_table, 0.0) > 0 else "0"
 
-                row += value.ljust(column_width)
+                row += value.center(alias_width)
 
-            logger.info(row)
+            lines.append(row)
+
+        lines.append("")
+        lines.append("Legend:")
+
+        for table in tables:
+            lines.append(f"{aliases[table]} = {table}")
+
+        logger.info("\n%s", "\n".join(lines))
 

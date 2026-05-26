@@ -59,27 +59,37 @@ def enrich_edges_with_semantics(edges: list[AdjacencyEdge]) -> list[AdjacencyEdg
     
     for edge in edges:
         # TODO : À adapter pour des clés composites de jointure
-        src_col = edge.source_columns[0] 
-        tgt_col = edge.target_columns[0]
+        column_pairs = list(zip(edge.source_columns, edge.target_columns))
         
-        semantic_score = semantic_engine.compute_similarity(src_col, tgt_col)
+        if column_pairs:
+            similarities = [
+                semantic_engine.compute_similarity(src_col, tgt_col)
+                for src_col, tgt_col in column_pairs
+            ]
+            semantic_score = sum(similarities) / len(similarities)
+        else:
+            semantic_score = 0.0
         
-        hybrid_score = round((SEMANTIC_WEIGHTS["join_success_ratio"] * edge.join_success_ratio) + (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 6)
-        
+        hybrid_score = round(
+            (SEMANTIC_WEIGHTS["join_success_ratio"] * edge.join_success_ratio) + 
+            (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 
+            6
+        )
         # TODO : Label à modifier, voir mardi
         if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
             evidence_label = "CONFIRMED"
         elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
-            evidence_label = "weak"
+            evidence_label = "WEAK"
         else:
-            evidence_label = "coincidence?"
+            evidence_label = "COINCIDENCE"
             
         enriched_edges.append(AdjacencyEdge(
             source_table=edge.source_table,
             target_table=edge.target_table,
             source_columns=edge.source_columns,
             target_columns=edge.target_columns,
-            join_success_ratio=hybrid_score,
+            join_success_ratio=edge.join_success_ratio,
+            hybrid_score=hybrid_score,
             evidence= evidence_label
         ))
         

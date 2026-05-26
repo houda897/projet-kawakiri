@@ -1,14 +1,14 @@
 from main import *
 from inference.adjacency import AdjacencyMatrixEngine
 from semantic.semantic_engine import *
+from colorama import Fore, Style
 
 
 def test_run_join_inference() -> None:
     db = get_manager()
     PK_engine = PrimaryKeyEngine(db)
-    CP_engine = CompositeKeyEngine(db)
 
-    primary_keys = process_composite_candidates(db, PK_engine, CP_engine)
+    primary_keys = PK_engine.infer_candidates()
 
     print("\n", "="*50, "\n")
     
@@ -41,29 +41,36 @@ def test_run_join_inference() -> None:
     
     logger.info("--- *** --- Graphe d'adjacence enrichi --- *** ---\n")
 
+    RED = Fore.RED
+    GREEN = Fore.GREEN
+    YELLOW = Fore.YELLOW
+    RESET = Style.RESET_ALL
+
     print("")
     logger.info("--- *** --- Jointure confirmée --- *** ---\n")
     confirmed_edges = [edge for edge in enriched_edges if edge.evidence == "CONFIRMED"]
     for edge in confirmed_edges:
         src = f"{edge.source_table}.{edge.source_columns[0]}"
         tgt = f"{edge.target_table}.{edge.target_columns[0]}"
-        logger.info(f"{src:<25} -> {tgt:<25} | hybrid score: {edge.join_success_ratio:<10} | {edge.evidence}")
+        logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {GREEN}{edge.evidence}{RESET}")
 
     print("") 
     logger.info("--- *** --- Jointure suspecte (coincidence?) --- *** ---\n")
-    coincicence_edges = [edge for edge in enriched_edges if edge.evidence == "coincidence?"]
+    coincicence_edges = [edge for edge in enriched_edges if edge.evidence == "COINCIDENCE"]
     for edge in coincicence_edges:
         src = f"{edge.source_table}.{edge.source_columns[0]}"
         tgt = f"{edge.target_table}.{edge.target_columns[0]}"
-        logger.info(f"{src:<25} -> {tgt:<25} | hybrid score: {edge.join_success_ratio:<10} | {edge.evidence}")
+        logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {YELLOW}{edge.evidence}{RESET}")
 
     print("")
     logger.info("--- *** --- Jointure faible --- *** ---\n")
-    weak_edges = [edge for edge in enriched_edges if edge.evidence == "weak"]
+    weak_edges = [edge for edge in enriched_edges if edge.evidence == "WEAK"]
     for edge in weak_edges:
         src = f"{edge.source_table}.{edge.source_columns[0]}"
         tgt = f"{edge.target_table}.{edge.target_columns[0]}"
-        logger.info(f"{src:<25} -> {tgt:<25} | hybrid score: {edge.join_success_ratio:<10} | {edge.evidence}")
+        logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {RED}{edge.evidence}{RESET}")
 
-
+run_basic_profile()
+run_identifiability()
+run_pk_inference()
 test_run_join_inference()
