@@ -211,6 +211,78 @@ class JoinEngine:
 
         return candidates
 
+    def store_candidates(
+        self,
+        candidates: list[JoinPrimaryKeyCandidate],
+    ) -> None:
+        """
+        Store inferred join candidates in metadata.
+        """
+
+        if not candidates:
+            return
+
+        rows = [
+            [
+                candidate.source_table,
+                candidate.source_column,
+                candidate.target_table,
+                candidate.target_column,
+                candidate.source_non_null_rows,
+                candidate.matched_rows,
+                candidate.join_success_ratio,
+            ]
+            for candidate in candidates
+        ]
+
+        self.db.insert(
+            f"{META_DB}.join_candidates",
+            rows,
+            column_names=[
+                "source_table",
+                "source_column",
+                "target_table",
+                "target_column",
+                "source_non_null_rows",
+                "matched_rows",
+                "join_success_ratio",
+            ],
+        )
+
+
+    def load_candidates(self) -> list[JoinPrimaryKeyCandidate]:
+        """
+        Load stored join candidates from metadata.
+        """
+
+        sql = f"""
+        SELECT
+            source_table,
+            source_column,
+            target_table,
+            target_column,
+            source_non_null_rows,
+            matched_rows,
+            join_success_ratio
+        FROM {q_ident(META_DB)}.join_candidates
+        ORDER BY source_table, target_table, source_column, target_column
+        """
+
+        rows = self.db.query(sql).result_rows
+
+        return [
+            JoinPrimaryKeyCandidate(
+                source_table=row[0],
+                source_column=row[1],
+                target_table=row[2],
+                target_column=row[3],
+                source_non_null_rows=row[4],
+                matched_rows=row[5],
+                join_success_ratio=row[6],
+            )
+            for row in rows
+        ]
+
     @staticmethod
     def _clean_type(ch_type: str) -> str:
         """Strip Nullable() wrapper to compare base physical types."""
