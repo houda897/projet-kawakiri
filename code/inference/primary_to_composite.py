@@ -40,7 +40,6 @@ def process_composite_candidates(
         return simple_candidates
 
     composite_candidates = composite_engine.generate_composite_candidates(
-        all_columns=all_columns,
         tables_without_pk=tables_without_pk,
         low_cardinality_columns=low_cardinality_columns,
     )

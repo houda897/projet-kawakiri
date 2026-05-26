@@ -140,7 +140,7 @@ class PrimaryKeyEngine:
 
     def store_candidates(
         self,
-        candidates: list[PrimaryKeyCandidate],
+        candidates: list[RankedKeyCandidate],
     ) -> None:
         """
         Persist primary-key candidates into the metadata table.
@@ -155,14 +155,14 @@ class PrimaryKeyEngine:
             [
                 candidate.database_name,
                 candidate.table_name,
-                candidate.column_name,
-                candidate.column_type,
+                ", ".join(candidate.column_names), 
+                ", ".join(candidate.column_types),
                 candidate.rows,
                 candidate.null_ratio,
                 candidate.uniqueness_ratio,
                 candidate.identifiability_score,
                 candidate.confidence,
-                candidate.reason,
+                candidate.rank_reason,
             ]
             for candidate in candidates
         ]
@@ -185,7 +185,7 @@ class PrimaryKeyEngine:
         )
 
     @staticmethod
-    def print_candidates(candidates: list[PrimaryKeyCandidate]) -> None:
+    def print_candidates(candidates: list[RankedKeyCandidate]) -> None:
         """Log all primary-key candidates grouped by table."""
         if not candidates:
             logger.info("No primary-key candidates found.")
@@ -194,17 +194,16 @@ class PrimaryKeyEngine:
         current_table = None
 
         for candidate in candidates:
-            if candidate.table_name != current_table:
-                current_table = candidate.table_name
-                logger.info("=== %s ===", candidate.table_name)
-
+            col_names_str = ", ".join(candidate.column_names)
+            
             logger.info(
-                "%s (%s) | confidence=%s | identifiability=%s | reason=%s",
-                candidate.column_name,
-                candidate.column_type,
+                "%s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s",
+                candidate.database_name,
+                candidate.table_name,
+                col_names_str,
                 candidate.confidence,
-                candidate.identifiability_score,
-                candidate.reason,
+                candidate.uniqueness_ratio,
+                candidate.rank_reason
             )
 
 

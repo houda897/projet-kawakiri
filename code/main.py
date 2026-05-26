@@ -1,4 +1,5 @@
 import argparse
+from typing import Any, cast
 from core.logger import get_logger
 from core.clickhouse_manager import get_manager
 from inference.join_candidate import JoinEngine
@@ -8,7 +9,7 @@ from profiling.basic_profile import ProfileEngine
 from stats.identifiability import IdentifiabilityEngine
 from stats.functional_dependency import validate_dependency
 from inference.composite_key import CompositeKeyEngine
-from inference.primary_to_composite import fetch_identifiability_scores, process_composite_candidates
+from inference.primary_to_composite import process_composite_candidates
 
 logger = get_logger(__name__)
 
@@ -67,10 +68,28 @@ def run_pk_inference() -> None:
     pk_engine = PrimaryKeyEngine(db)
     composite_engine = CompositeKeyEngine(db)
 
-    final_candidates = process_composite_candidates(db, pk_engine, composite_engine)
+    raw_simple_candidates = pk_engine.infer_candidates()
+    low_cardinality_columns = getattr(pk_engine, "low_cardinality_columns", set())
+    
+    simple_candidates = [
+        composite_engine.ranking_policy.build_candidate(
+            database_name=candidate.database_name,
+            table_name=candidate.table_name,
+            column_names=(candidate.column_name,),
+            column_types=(candidate.column_type,),
+            rows=candidate.rows,
+            null_ratio=candidate.null_ratio,
+            uniqueness_ratio=candidate.uniqueness_ratio,
+            identifiability_score=candidate.identifiability_score,
+            low_cardinality_columns=low_cardinality_columns, 
+        )
+        for candidate in raw_simple_candidates
+    ]
 
-    pk_engine.store_candidates(final_candidates)
-    pk_engine.print_candidates(final_candidates)
+    final_candidates = process_composite_candidates(db, simple_candidates, composite_engine, low_cardinality_columns)
+
+    pk_engine.store_candidates(cast(Any, final_candidates))
+    pk_engine.print_candidates(cast(Any, final_candidates))
 
 
 def run_join(
