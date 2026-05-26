@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from core.clickhouse_manager import clickhouse_manager
 from core.logger import get_logger
-from inference.primary_key import PrimaryKeyCandidate
 
+if TYPE_CHECKING:
+    from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
 

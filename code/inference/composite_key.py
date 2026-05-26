@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import TYPE_CHECKING
-
+from config.scoring import PK_WEIGHTS
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.schema import q_ident
@@ -134,7 +134,9 @@ class CompositeKeyEngine:
         columns = []
 
         for row in rows:
-            confidence = round(0.7 * row[6] + 0.3 * row[7], 6)
+            confidence = round(PK_WEIGHTS["uniqueness"] * row[6]
+    + PK_WEIGHTS["identifiability"] * row[7],
+    6,)
 
             columns.append(
                 PrimaryKeyCandidate(
