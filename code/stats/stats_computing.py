@@ -47,6 +47,20 @@ def compute_column_stats(
 
     sql = f"""
     INSERT INTO {q_ident(META_DB)}.column_stats
+    (
+        run_ts,
+        database_name,
+        table_name,
+        column_name,
+        column_type,
+        rows,
+        non_null_rows,
+        distinct_count,
+        entropy_ratio,
+        sparsity,
+        variation_coefficient,
+        skewness_score
+    )
     WITH
         base AS (
             SELECT

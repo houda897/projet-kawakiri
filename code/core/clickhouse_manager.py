@@ -64,13 +64,6 @@ class clickhouse_manager:
 
         return self.connect().query(sql, parameters=parameters)
 
-    def queryDf(self, sql: str, parameters: dict | None = None):
-        """Execute a SELECT query and return results as a pandas DataFrame."""
-        if parameters is None:
-            return self.connect().query_df(sql)
-
-        return self.connect().query_df(sql, parameters=parameters)
-
     def command(self, sql: str, parameters: dict | None = None):
         """Execute a DDL or INSERT/TRUNCATE statement that does not return rows."""
         if parameters is None:

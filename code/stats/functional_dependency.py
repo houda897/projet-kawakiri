@@ -32,9 +32,9 @@ def check_functional_dependency(database: str, table: str, pk_candidate: str | l
     HAVING count(1) > 1
     """
 
-    df_violations = db_manager.queryDf(query_check)
-        
-    return df_violations.empty
+    result = db_manager.query(query_check)
+    
+    return len(result.result_rows) == 0
 
 def validate_dependency(candidates_list: list[PrimaryKeyCandidate]) -> list[PrimaryKeyCandidate]:
     new_candidates = candidates_list.copy()
