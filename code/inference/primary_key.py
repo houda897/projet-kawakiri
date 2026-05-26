@@ -8,7 +8,6 @@ from core.schema import q_ident
 
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from inference.low_cardinality import LowCardinalityAnalyzer
-
 logger = get_logger(__name__)
 
 
@@ -206,7 +205,103 @@ class PrimaryKeyEngine:
                 candidate.rank_reason
             )
 
+    def run_full_inference(self):
+        '''Full pipeline orchestration: simple keys, then composite keys for tables without simple PK.'''
+        
+        from inference.composite_key import CompositeKeyEngine
+        composite_engine = CompositeKeyEngine(self.db)
+
+        logger.info('Simple key candidates inferenced: %s', len(self.infer_ranked_simple_candidates()))
+        raw_simple_candidates = self.infer_candidates()
+
+        low_card_cols = set()
+        if hasattr(self, 'low_cardinality_analyzer'):
+            pass
+
+        simple_candidates = [
+            composite_engine.ranking_policy.build_candidate(
+                database_name=cand.database_name,
+                table_name=cand.table_name,
+                column_names=(cand.column_name,),
+                column_types=(cand.column_type,),
+                rows=cand.rows,
+                null_ratio=cand.null_ratio,
+                uniqueness_ratio=cand.uniqueness_ratio,
+                identifiability_score=cand.identifiability_score,
+                low_cardinality_columns=low_card_cols,
+            )
+            for cand in raw_simple_candidates
+        ]
+
+        all_columns = self._fetch_candidate_columns()
+
+        tables_with_simple_pk = {cand.table_name for cand in simple_candidates}
+        all_tables = {cand.table_name for cand in all_columns}
+        tables_without_pk = sorted(all_tables - tables_with_simple_pk)
+
+        logger.info("Tables without simple primary key: %s", tables_without_pk)
+        logger.info("Generating composite candidates for tables without simple PK...")
+
+        final_candidates: list[RankedKeyCandidate] = list(simple_candidates)
+
+        if tables_without_pk:
+            composite_candidates = composite_engine.generate_composite_candidates(
+                tables_without_pk=tables_without_pk,
+                low_cardinality_columns=low_card_cols,
+            )
+            final_candidates.extend(composite_candidates)
+
+        logger.info('Storage of the candidates')
+        
+        self.store_candidates(final_candidates)
+
+        return final_candidates
+
+    def _fetch_candidate_columns(self) -> list[PrimaryKeyCandidate]:
+        '''Get all non-nullable columns as potential components for composite keys.'''
+
+        sql = f"""
+        SELECT
+            p.database_name,
+            p.table_name,
+            p.column_name,
+            p.column_type,
+            p.rows,
+            p.null_ratio,
+            p.uniqueness_ratio,
+            coalesce(i.identifiability_score, 0.0) AS identifiability_score
+        FROM {q_ident(META_DB)}.column_profiles AS p
+        LEFT JOIN {q_ident(META_DB)}.identifiability_scores AS i
+            ON p.database_name = i.database_name
+           AND p.table_name = i.table_name
+           AND p.column_name = i.column_name
+        WHERE p.null_ratio <= 0.000001
+          AND NOT startsWith(p.column_name, '__')
+        ORDER BY p.table_name, p.column_name
+        """
+
+        rows = self.db.query(sql).result_rows
+        candidates = []
+
+        for row in rows:
+            candidates.append(
+                PrimaryKeyCandidate(
+                    database_name=row[0],
+                    table_name=row[1],
+                    column_name=row[2],
+                    column_type=row[3],
+                    rows=row[4],
+                    null_ratio=row[5],
+                    uniqueness_ratio=row[6],
+                    identifiability_score=row[7],
+                    confidence=0.0,
+                    reason=""
+                )
+            )
+        return candidates
 
 def candidates_to_dicts(candidates: list[PrimaryKeyCandidate]) -> list[dict]:
     """Serialize a list of PrimaryKeyCandidate objects to plain dicts."""
     return [asdict(candidate) for candidate in candidates]
+
+
