@@ -2,6 +2,7 @@ import re
 from rapidfuzz import fuzz
 from core.logger import get_logger
 from inference.adjacency import AdjacencyEdge
+from config.scoring import SEMANTIC_THRESHOLDS, SEMANTIC_WEIGHTS
 
 logger = get_logger(__name__)
 
@@ -63,15 +64,15 @@ def enrich_edges_with_semantics(edges: list[AdjacencyEdge]) -> list[AdjacencyEdg
         
         semantic_score = semantic_engine.compute_similarity(src_col, tgt_col)
         
-        hybrid_score = round((0.66 * edge.join_success_ratio) + (0.34 * semantic_score), 6)
+        hybrid_score = round((SEMANTIC_WEIGHTS["join_success_ratio"] * edge.join_success_ratio) + (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 6)
         
         # TODO : Label à modifier, voir mardi
-        if semantic_score >= 0.75:
+        if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
             evidence_label = "CONFIRMED"
-        elif semantic_score <= 0.25 and edge.join_success_ratio > 0.9:
-            evidence_label = "coincidence?"
-        else:
+        elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
             evidence_label = "weak"
+        else:
+            evidence_label = "coincidence?"
             
         enriched_edges.append(AdjacencyEdge(
             source_table=edge.source_table,
