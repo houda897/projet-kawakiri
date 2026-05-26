@@ -162,6 +162,21 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (source_table, target_table, created_at)
     """
 )
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.join_candidates
+    (
+        source_table String,
+        source_column String,
+        target_table String,
+        target_column String,
+        source_non_null_rows UInt64,
+        matched_rows UInt64,
+        join_success_ratio Float64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (source_table, target_table, source_column, target_column, created_at)
+    """)
 
 
 
@@ -171,6 +186,7 @@ COMPUTED_METADATA_TABLES = (
     "identifiability_scores",
     "primary_key_candidates",
     "join_candidates",
+    "adjacency_edges"
     
 )
 
