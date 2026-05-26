@@ -1,73 +1,154 @@
-import itertools
-from core.logger import get_logger
-from inference.primary_key import PrimaryKeyCandidate
-from core.clickhouse_manager import clickhouse_manager
+from __future__ import annotations
+
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
+from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.logger import get_logger
+from core.schema import q_ident
+from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from stats.functional_dependency import check_functional_dependency
+
+if TYPE_CHECKING:
+    from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
 
+
 class CompositeKeyEngine:
+    """
+    Generate composite-key candidates for tables without a simple primary key.
+    """
+
     def __init__(self, db: clickhouse_manager):
         self.db = db
+        self.ranking_policy = KeyRankingPolicy()
 
-    def _is_numeric(self, ch_type: str) -> bool:
-        """Check if a ClickHouse type is numeric."""
-        t = ch_type.lower()
-        return "int" in t or "float" in t or "decimal" in t
-    
-    def generate_composite_candidates(self, all_columns: list[PrimaryKeyCandidate], tables_without_pk: list[str]) -> list[PrimaryKeyCandidate]:
-        '''
-        Generates composite key candidates using a greedy iterative approach.
-        For each table without a simple PK, it starts with the column with the highest confidence score and iteratively adds columns based on their confidence and uniqueness ratios.
-        '''
-        
-        valid_composite_candidates = []
+    def generate_composite_candidates(
+        self,
+        tables_without_pk: list[str],
+        low_cardinality_columns: set[tuple[str, str]],
+    ) -> list[RankedKeyCandidate]:
+        """
+        Propose composite candidates, but do not make the final PK decision.
+        """
 
+        all_columns = self.load_columns_for_composite_search()
         columns_by_table = defaultdict(list)
-        for c in all_columns:
-            columns_by_table[c.table_name].append(c)
+
+        for column in all_columns:
+            columns_by_table[column.table_name].append(column)
+
+        composite_candidates = []
 
         for table in tables_without_pk:
-            table_cols = columns_by_table.get(table, [])
-            
-            if len(table_cols) < 2:
+            table_columns = columns_by_table.get(table, [])
+
+            if len(table_columns) < 2:
                 continue
 
-            table_cols.sort(key=lambda c: (c.confidence, c.uniqueness_ratio), reverse=True)
-            
-            database_name = table_cols[0].database_name
+            table_columns.sort(
+                key=lambda column: (
+                    column.confidence,
+                    column.uniqueness_ratio,
+                    column.identifiability_score,
+                ),
+                reverse=True,
+            )
 
-            current_combo = [table_cols[0], table_cols[1]]
-            
-            for size in range(2, len(table_cols) + 1):
-                
-                if size > 2:
-                    current_combo.append(table_cols[size - 1])
-                
-                combo_names = [c.column_name for c in current_combo]
-                logger.info(f"Testing combo for {table} (Size {size}): {combo_names}")
-                
-                is_valid = check_functional_dependency(database_name, table, combo_names, self.db)
-                
-                if is_valid:
-                    logger.info(f"Composite key found {table} : {combo_names}")
-                    
-                    valid_composite_candidates.append(PrimaryKeyCandidate(
+            current_combo = []
+
+            for column in table_columns:
+                current_combo.append(column)
+
+                if len(current_combo) < 2:
+                    continue
+
+                combo_names = tuple(col.column_name for col in current_combo)
+                combo_types = tuple(col.column_type for col in current_combo)
+                database_name = current_combo[0].database_name
+
+                logger.info("Testing composite key for %s: %s", table, combo_names)
+
+                is_valid = check_functional_dependency(
+                    database_name,
+                    table,
+                    list(combo_names),
+                    self.db,
+                )
+
+                if not is_valid:
+                    continue
+
+                logger.info("Composite key found for %s: %s", table, combo_names)
+
+                composite_candidates.append(
+                    self.ranking_policy.build_candidate(
                         database_name=database_name,
                         table_name=table,
-                        column_name=", ".join(combo_names), 
-                        column_type="Composite",
+                        column_names=combo_names,
+                        column_types=combo_types,
                         rows=current_combo[0].rows,
-                        null_ratio=0.0,
-                        uniqueness_ratio=1.0, 
-                        identifiability_score=sum(c.identifiability_score for c in current_combo) / len(current_combo),
-                        confidence=sum(c.confidence for c in current_combo) / len(current_combo),
-                        reason=f"Composite PK (Size {len(combo_names)}) validated by DF"
-                    ))
-                    
-                    break 
-                    
-        return valid_composite_candidates
-    
-    
+                        null_ratio=max(col.null_ratio for col in current_combo),
+                        uniqueness_ratio=1.0,
+                        identifiability_score=sum(
+                            col.identifiability_score for col in current_combo
+                        )
+                        / len(current_combo),
+                        low_cardinality_columns=low_cardinality_columns,
+                    )
+                )
+
+                break
+
+        return composite_candidates
+
+    def load_columns_for_composite_search(self) -> list["PrimaryKeyCandidate"]:
+        """
+        Load column evidence used to build composite-key candidates.
+        """
+
+        from inference.primary_key import PrimaryKeyCandidate
+
+        sql = f"""
+        SELECT
+            p.database_name,
+            p.table_name,
+            p.column_name,
+            p.column_type,
+            p.rows,
+            p.null_ratio,
+            p.uniqueness_ratio,
+            coalesce(i.identifiability_score, 0.0) AS identifiability_score
+        FROM {q_ident(META_DB)}.column_profiles AS p
+        LEFT JOIN {q_ident(META_DB)}.identifiability_scores AS i
+            ON p.database_name = i.database_name
+           AND p.table_name = i.table_name
+           AND p.column_name = i.column_name
+        WHERE p.null_ratio <= 0.000001
+          AND NOT startsWith(p.column_name, '__')
+        ORDER BY p.table_name, p.column_name
+        """
+
+        rows = self.db.query(sql).result_rows
+        columns = []
+
+        for row in rows:
+            confidence = round(0.7 * row[6] + 0.3 * row[7], 6)
+
+            columns.append(
+                PrimaryKeyCandidate(
+                    database_name=row[0],
+                    table_name=row[1],
+                    column_name=row[2],
+                    column_type=row[3],
+                    rows=row[4],
+                    null_ratio=row[5],
+                    uniqueness_ratio=row[6],
+                    identifiability_score=row[7],
+                    confidence=confidence,
+                    reason="column_evidence_for_composite_key_search",
+                )
+            )
+
+        return columns
