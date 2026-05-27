@@ -45,6 +45,8 @@ def test_join_candidate_stores_all_metrics() -> None:
     assert candidate.matched_rows == 6
 
 
+#
+
 # ── Tests JoinEngine.should_skip_pair ─────────────────────────────────────────
 
 def test_should_skip_pair_rejects_same_table() -> None:
@@ -52,7 +54,7 @@ def test_should_skip_pair_rejects_same_table() -> None:
     source = make_source("sales", "product_id")
     pk = make_pk("sales", "product_id")  
 
-    assert JoinEngine.should_skip_pair(source, pk) is True
+    assert JoinEngine.should_skip_pair((source,), pk) is True
 
 
 def test_should_skip_pair_rejects_incompatible_types() -> None:
@@ -60,7 +62,7 @@ def test_should_skip_pair_rejects_incompatible_types() -> None:
     source = make_source("sales", "product_id", col_type="String")
     pk = make_pk("products", "product_id", col_type="Int64") 
 
-    assert JoinEngine.should_skip_pair(source, pk) is True
+    assert JoinEngine.should_skip_pair((source,), pk) is True
 
 
 def test_should_skip_pair_accepts_compatible_candidate() -> None:
@@ -68,7 +70,7 @@ def test_should_skip_pair_accepts_compatible_candidate() -> None:
     source = make_source("sales", "product_id", col_type="Int64")
     pk = make_pk("products", "product_id", col_type="Int64")
 
-    assert JoinEngine.should_skip_pair(source, pk) is False
+    assert JoinEngine.should_skip_pair((source,), pk) is False
 
 
 def test_should_skip_pair_handles_nullable_type() -> None:
@@ -76,4 +78,4 @@ def test_should_skip_pair_handles_nullable_type() -> None:
     source = make_source("sales", "product_id", col_type="Nullable(Int64)")
     pk = make_pk("products", "product_id", col_type="Int64")
 
-    assert JoinEngine.should_skip_pair(source, pk) is False
+    assert JoinEngine.should_skip_pair((source,), pk) is False

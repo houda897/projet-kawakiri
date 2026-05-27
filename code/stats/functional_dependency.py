@@ -19,22 +19,22 @@ def check_functional_dependency(database: str, table: str, pk_candidate: str | l
     if isinstance(pk_candidate, list):
         q_cols = ", ".join("`"+col+"`" for col in pk_candidate)
     else:
-        q_cols = pk_candidate 
+        q_cols = f"`{pk_candidate}`"
 
     query_check = f"""
     WITH key_research AS (
-        SELECT MD5(concat({q_cols})) AS col_concat
+        SELECT cityHash64({q_cols}) AS col_hash
         FROM {q_table}
     )
-    SELECT count(1), col_concat
+    SELECT count(1), col_hash
     FROM key_research
-    GROUP BY col_concat 
+    GROUP BY col_hash
     HAVING count(1) > 1
     """
 
-    df_violations = db_manager.queryDf(query_check)
-        
-    return df_violations.empty
+    result = db_manager.query(query_check)
+
+    return len(result.result_rows) == 0
 
 def validate_dependency(candidates_list: list[PrimaryKeyCandidate]) -> list[PrimaryKeyCandidate]:
     new_candidates = candidates_list.copy()

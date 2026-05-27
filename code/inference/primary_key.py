@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.schema import q_ident
+
 from inference.composite_key import CompositeKeyEngine
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from inference.low_cardinality import LowCardinalityAnalyzer
