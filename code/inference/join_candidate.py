@@ -46,6 +46,12 @@ class JoinEngine:
     def __init__(self, db: clickhouse_manager):
         self.db = db
 
+    def _to_q_ident_list(self, columns_str: str) -> str:
+        return ", ".join(q_ident(c.strip()) for c in columns_str.split(","))
+
+    def _to_is_not_null_cond(self, columns_str: str) -> str:
+        return " AND ".join(f"{q_ident(c.strip())} IS NOT NULL" for c in columns_str.split(","))
+
     def evaluate_join_to_primary_key(
         self,
         source_table: str,
@@ -59,23 +65,27 @@ class JoinEngine:
 
         source_ref = f"{q_ident(CH_DB)}.{q_ident(source_table)}"
         target_ref = f"{q_ident(CH_DB)}.{q_ident(primary_key.table_name)}"
-        source_col = q_ident(source_column)
-        target_col = q_ident(primary_key.column_name)
+
+        source_cols = self._to_q_ident_list(source_column)
+        target_cols = self._to_q_ident_list(primary_key.column_name)
+
+        source_not_null = self._to_is_not_null_cond(source_column)
+        target_not_null = self._to_is_not_null_cond(primary_key.column_name)
 
         limit_clause = f"LIMIT {limit_rows}" if limit_rows is not None else ""
 
         sql = f"""
         WITH
             source_values AS (
-                SELECT {source_col} AS value
+                SELECT tuple({source_cols}) AS value
                 FROM {source_ref}
-                WHERE {source_col} IS NOT NULL
+                WHERE {source_not_null}
                 {limit_clause}
             ),
             target_values AS (
-                SELECT DISTINCT {target_col} AS value
+                SELECT DISTINCT tuple({target_cols}) AS value
                 FROM {target_ref}
-                WHERE {target_col} IS NOT NULL
+                WHERE {target_not_null}
             )
         SELECT
             count() AS source_non_null_rows,
@@ -192,22 +202,45 @@ class JoinEngine:
         This is the main entry point for building the adjacency matrix used
         to infer the star-schema topology.
         """
+        import itertools
+        from collections import defaultdict
+
         source_columns = self.load_source_columns()
+        cols_by_table = defaultdict(list)
+        for col in source_columns:
+            cols_by_table[col.table_name].append(col)
+
         candidates = []
 
-        for source in source_columns:
-            for primary_key in primary_keys:
-                if self.should_skip_pair(source, primary_key):
+        for primary_key in primary_keys:
+            target_cols = [c.strip() for c in primary_key.column_name.split(",")]
+            target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
+            is_composite = len(target_cols) > 1
+
+            for table_name, t_cols in cols_by_table.items():
+                if table_name == primary_key.table_name:
                     continue
 
-                result = self.evaluate_join_to_primary_key(
-                    source_table=source.table_name,
-                    source_column=source.column_name,
-                    primary_key=primary_key,
-                )
+                valid_source_combos = []
 
-                if result.join_success_ratio >= min_success_ratio:
-                    candidates.append(result)
+                if not is_composite:
+                    for src in t_cols:
+                        if not self.should_skip_pair((src,), primary_key):
+                            valid_source_combos.append(src.column_name)
+                else:
+                    for combo in itertools.permutations(t_cols, len(target_cols)):
+                        if not self.should_skip_pair(combo, primary_key):
+                            valid_source_combos.append(", ".join(c.column_name for c in combo))
+
+                for combo_str in valid_source_combos:
+                    result = self.evaluate_join_to_primary_key(
+                        source_table=table_name,
+                        source_column=combo_str,
+                        primary_key=primary_key,
+                    )
+
+                    if result.join_success_ratio >= min_success_ratio:
+                        candidates.append(result)
 
         return candidates
 
@@ -291,23 +324,33 @@ class JoinEngine:
     @classmethod
     def should_skip_pair(
         cls,
-        source: SourceColumn,
+        source_combo: tuple[SourceColumn, ...],
         primary_key: PrimaryKeyCandidate,
     ) -> bool:
         """
-        Return True if this source / primary-key pair cannot be a valid FK relationship.
+        Return True if this source combination / primary-key pair cannot be a valid FK relationship.
 
         A pair is skipped when the source and target belong to the same table,
         or when their base ClickHouse types are incompatible (e.g. String vs Int64).
         Nullable wrappers are stripped before comparing types.
         """
-        same_table = source.table_name == primary_key.table_name
+        if not source_combo:
+            return True
 
-        source_base = cls._clean_type(source.column_type)
-        target_base = cls._clean_type(primary_key.column_type)
-        incompatible_type = source_base != target_base
+        same_table = source_combo[0].table_name == primary_key.table_name
+        if same_table:
+            return True
 
-        return same_table or incompatible_type
+        target_types = [cls._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
+
+        if len(source_combo) != len(target_types):
+            return True
+
+        for src, t_type in zip(source_combo, target_types, strict=False):
+            if cls._clean_type(src.column_type) != t_type:
+                return True
+
+        return False
 
     @staticmethod
     def print_result(result: JoinPrimaryKeyCandidate) -> None:

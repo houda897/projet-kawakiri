@@ -1,15 +1,14 @@
 import argparse
-from typing import Any, cast
-from core.logger import get_logger
+
 from core.clickhouse_manager import get_manager
+from core.logger import get_logger
+from inference.adjacency import AdjacencyMatrixEngine
 from inference.join_candidate import JoinEngine
 from inference.primary_key import PrimaryKeyEngine
+from inference.table_role import TableRoleEngine
 from ingestion.csv_loader import CsvIngestionEngine
 from profiling.basic_profile import ProfileEngine
 from stats.identifiability import IdentifiabilityEngine
-from stats.functional_dependency import validate_dependency
-from inference.composite_key import CompositeKeyEngine
-from inference.primary_to_composite import process_composite_candidates
 
 logger = get_logger(__name__)
 
@@ -65,31 +64,11 @@ def run_identifiability() -> None:
 
 def run_pk_inference() -> None:
     db = get_manager()
-    pk_engine = PrimaryKeyEngine(db)
-    composite_engine = CompositeKeyEngine(db)
+    engine = PrimaryKeyEngine(db)
 
-    raw_simple_candidates = pk_engine.infer_candidates()
-    low_cardinality_columns = getattr(pk_engine, "low_cardinality_columns", set())
-    
-    simple_candidates = [
-        composite_engine.ranking_policy.build_candidate(
-            database_name=candidate.database_name,
-            table_name=candidate.table_name,
-            column_names=(candidate.column_name,),
-            column_types=(candidate.column_type,),
-            rows=candidate.rows,
-            null_ratio=candidate.null_ratio,
-            uniqueness_ratio=candidate.uniqueness_ratio,
-            identifiability_score=candidate.identifiability_score,
-            low_cardinality_columns=low_cardinality_columns, 
-        )
-        for candidate in raw_simple_candidates
-    ]
-
-    final_candidates = process_composite_candidates(db, simple_candidates, composite_engine, low_cardinality_columns)
-
-    pk_engine.store_candidates(cast(Any, final_candidates))
-    pk_engine.print_candidates(cast(Any, final_candidates))
+    candidates = engine.infer_candidates()
+    engine.store_candidates(candidates)
+    engine.print_candidates(candidates)
 
 
 def run_join(
@@ -121,7 +100,33 @@ def run_join_inference() -> None:
     join_engine = JoinEngine(db)
 
     candidates = join_engine.evaluate_candidates(primary_keys)
+    join_engine.store_candidates(candidates)
     join_engine.print_candidates(candidates)
+
+
+
+def run_adjacency() -> None:
+    db = get_manager()
+
+    join_engine = JoinEngine(db)
+    adjacency_engine = AdjacencyMatrixEngine(db)
+
+    join_candidates = join_engine.load_candidates()
+    edges = adjacency_engine.build_edges_from_join_candidates(join_candidates)
+    matrix = adjacency_engine.build_matrix(edges)
+
+    adjacency_engine.store_edges(edges)
+    adjacency_engine.print_matrix(matrix)
+    adjacency_engine.print_binary_matrix(matrix)
+
+
+
+def run_table_roles() -> None:
+    db = get_manager()
+    engine = TableRoleEngine(db)
+
+    roles = engine.infer_roles()
+    engine.print_roles(roles)
 
 
 def main() -> None:
@@ -170,6 +175,16 @@ def main() -> None:
         help="Infer join candidates from primary-key candidates",
     )
 
+    subparsers.add_parser(
+        "build-adjacency",
+        help="Build the directed adjacency matrix from inferred joins",
+    )
+
+    subparsers.add_parser(
+        "infer-table-roles",
+        help="Infer fact and dimension roles from the adjacency graph",
+    )
+
     args = parser.parse_args()
 
     if args.command == "ingest-csv":
@@ -197,6 +212,12 @@ def main() -> None:
 
     elif args.command == "infer-joins":
         run_join_inference()
+
+    elif args.command == "build-adjacency":
+        run_adjacency()
+
+    elif args.command == "infer-table-roles":
+        run_table_roles()
 
 
 if __name__ == "__main__":

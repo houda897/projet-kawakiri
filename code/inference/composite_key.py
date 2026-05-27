@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import TYPE_CHECKING
+
 from config.scoring import PK_WEIGHTS
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.schema import q_ident
-from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from stats.functional_dependency import check_functional_dependency
+
+from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 
 if TYPE_CHECKING:
     from inference.primary_key import PrimaryKeyCandidate
@@ -103,7 +105,7 @@ class CompositeKeyEngine:
 
         return composite_candidates
 
-    def load_columns_for_composite_search(self) -> list["PrimaryKeyCandidate"]:
+    def load_columns_for_composite_search(self) -> list[PrimaryKeyCandidate]:
         """
         Load column evidence used to build composite-key candidates.
         """
