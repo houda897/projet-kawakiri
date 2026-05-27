@@ -48,47 +48,49 @@ class SemanticEngine:
         return round(score, 4)
 
 
-def enrich_edges_with_semantics(edges: list[AdjacencyEdge]) -> list[AdjacencyEdge]:
-    '''
-    Enrich the join candidates (edges) by recalculating an hybrid score that combine the original join success ratio with a semantic similarity score
-    and add a evidence label based on the new hybrid score
-    '''
+    def enrich_edges_with_semantics(self,edges: list[AdjacencyEdge]) -> list[AdjacencyEdge]:
+        '''
+        Enrich the join candidates (edges) by recalculating an hybrid score that combine the original join success ratio with a semantic similarity score
+        and add a evidence label based on the new hybrid score
+        '''
 
-    semantic_engine = SemanticEngine()
-    enriched_edges = []
-    
-    for edge in edges:
-        column_pairs = list(zip(edge.source_columns, edge.target_columns))
+        semantic_engine = SemanticEngine()
+        enriched_edges = []
         
-        if column_pairs:
-            similarities = [
-                semantic_engine.compute_similarity(src_col, tgt_col)
-                for src_col, tgt_col in column_pairs
-            ]
-            semantic_score = sum(similarities) / len(similarities)
-        else:
-            semantic_score = 0.0
-        
-        hybrid_score = round(
-            (SEMANTIC_WEIGHTS["join_success_ratio"] * edge.join_success_ratio) + 
-            (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 
-            6
-        )
-        if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
-            evidence_label = "CONFIRMED"
-        elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
-            evidence_label = "WEAK"
-        else:
-            evidence_label = "COINCIDENCE"
+        for edge in edges:
+            column_pairs = list(zip(edge.source_columns, edge.target_columns))
             
-        enriched_edges.append(AdjacencyEdge(
-            source_table=edge.source_table,
-            target_table=edge.target_table,
-            source_columns=edge.source_columns,
-            target_columns=edge.target_columns,
-            join_success_ratio=edge.join_success_ratio,
-            hybrid_score=hybrid_score,
-            evidence= evidence_label
-        ))
+            if column_pairs:
+                similarities = [
+                    semantic_engine.compute_similarity(src_col, tgt_col)
+                    for src_col, tgt_col in column_pairs
+                ]
+                semantic_score = sum(similarities) / len(similarities)
+            else:
+                semantic_score = 0.0
+            
+            hybrid_score = round(
+                (SEMANTIC_WEIGHTS["join_success_ratio"] * edge.join_success_ratio) + 
+                (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 
+                6
+            )
+            if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
+                evidence_label = "CONFIRMED"
+            elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
+                evidence_label = "WEAK"
+            else:
+                evidence_label = "COINCIDENCE"
+                
+            enriched_edges.append(AdjacencyEdge(
+                source_table=edge.source_table,
+                target_table=edge.target_table,
+                source_columns=edge.source_columns,
+                target_columns=edge.target_columns,
+                join_success_ratio=edge.join_success_ratio,
+                hybrid_score=hybrid_score,
+                evidence= evidence_label
+            ))
+
         
-    return enriched_edges
+            
+        return enriched_edges

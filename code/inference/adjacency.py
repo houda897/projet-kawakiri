@@ -4,8 +4,9 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
-from core.schema import q_ident
 from inference.join_candidate import JoinPrimaryKeyCandidate
+
+from colorama import Fore, Style, init
 
 logger = get_logger(__name__)
 
@@ -59,7 +60,12 @@ class AdjacencyMatrixEngine:
                 )
             )
 
-        return edges
+        from semantic.semantic_engine import SemanticEngine
+
+        sem_engine = SemanticEngine()
+        enriched_edges = sem_engine.enrich_edges_with_semantics(edges)
+
+        return enriched_edges
 
     def build_matrix(
         self,
@@ -190,4 +196,25 @@ class AdjacencyMatrixEngine:
             lines.append(f"{aliases[table]} = {table}")
 
         logger.info("\n%s", "\n".join(lines))
+
+    @staticmethod
+    def print_edges(edges: list[AdjacencyEdge]) -> None:
+        '''Print the edges with their evidence label'''
+        init(convert=True)
+        RED = Fore.RED
+        GREEN = Fore.GREEN
+        YELLOW = Fore.YELLOW
+        RESET = Style.RESET_ALL
+
+        for edge in edges:
+            src = f"{edge.source_table}.{edge.source_columns[0]}"
+            tgt = f"{edge.target_table}.{edge.target_columns[0]}"
+            if edge.evidence == "CONFIRMED":
+                color = GREEN
+            elif edge.evidence == "WEAK":
+                color = RED
+            else:
+                color = YELLOW
+
+            logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {color}{edge.evidence}{RESET}")
 
