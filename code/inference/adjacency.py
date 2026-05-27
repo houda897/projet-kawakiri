@@ -79,8 +79,9 @@ class AdjacencyMatrixEngine:
         """
 
         matrix: dict[str, dict[str, float]] = {}
+        confirmed_edges = [edge for edge in edges if edge.evidence == "CONFIRMED"]
 
-        for edge in edges:
+        for edge in confirmed_edges:
             matrix.setdefault(edge.source_table, {})
 
             current_score = matrix[edge.source_table].get(edge.target_table, 0.0)
