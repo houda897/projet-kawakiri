@@ -54,7 +54,6 @@ class SemanticEngine:
         and add a evidence label based on the new hybrid score
         '''
 
-        semantic_engine = SemanticEngine()
         enriched_edges = []
         
         for edge in edges:
@@ -62,7 +61,7 @@ class SemanticEngine:
             
             if column_pairs:
                 similarities = [
-                    semantic_engine.compute_similarity(src_col, tgt_col)
+                    self.compute_similarity(src_col, tgt_col)
                     for src_col, tgt_col in column_pairs
                 ]
                 semantic_score = sum(similarities) / len(similarities)
