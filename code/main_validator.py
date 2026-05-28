@@ -3,44 +3,30 @@ from inference.adjacency import AdjacencyMatrixEngine
 from semantic.semantic_engine import *
 from colorama import Fore, Style, init
 
+init()
 
-def test_run_join_inference() -> None:
-    db = get_manager()
-    PK_engine = PrimaryKeyEngine(db)
+print(Fore.GREEN + '--- *** --- basic_profile --- *** ---' + Style.RESET_ALL)
+run_basic_profile()
 
-    primary_keys = PK_engine.infer_candidates()
+print('\n' + '=' * 80 + '\n')
 
-    print("\n", "="*50, "\n")
-    
-    logger.info("--- *** --- Evaluation de jointures physiques --- *** ---\n")
-    join_engine = JoinEngine(db)
-    raw_join_candidates = join_engine.evaluate_candidates(primary_keys) 
-    
-    join_engine.print_candidates(raw_join_candidates)
+print(Fore.GREEN + '--- *** --- identifiability --- *** ---' + Style.RESET_ALL)
+run_identifiability()
 
-    print("\n", "="*50, "\n")
+print('\n' + '=' * 80 + '\n')
 
+print(Fore.GREEN + '--- *** --- pk_inference --- *** ---' + Style.RESET_ALL)
+run_pk_inference()
 
-    logger.info("--- *** --- Construction du graphe d'adjacence... --- *** ---\n")
-    adj_engine = AdjacencyMatrixEngine(db)
-    edges = adj_engine.build_edges_from_join_candidates(raw_join_candidates)
+print('\n' + '=' * 80 + '\n')
 
-    logger.info(f"--- *** --- Sauvegarde de {len(edges)} arêtes analysées --- *** ---")
-    adj_engine.store_edges(edges)
+print(Fore.GREEN + '--- *** --- join_inference --- *** ---' + Style.RESET_ALL)
+run_join_inference()
 
-    print("\n", "="*50, "\n")
+print(Fore.GREEN + '--- *** --- adjacency --- *** ---' + Style.RESET_ALL)
+run_adjacency()
 
-    logger.info("--- *** --- Construction de la matrice d'adjacence --- *** ---")
-    final_matrix = adj_engine.build_matrix(edges)
-    adj_engine.print_binary_matrix(final_matrix)
+print('\n' + '=' * 80 + '\n')
 
-    print("\n", "="*50, "\n")
-    
-    logger.info("--- *** --- Graphe d'adjacence enrichi --- *** ---\n")
-
-    adj_engine.print_edges(edges)
-
-#run_basic_profile()
-#run_identifiability()
-#run_pk_inference()
-test_run_join_inference()
+print(Fore.GREEN + '--- *** --- table_roles --- *** ---' + Style.RESET_ALL)
+run_table_roles()

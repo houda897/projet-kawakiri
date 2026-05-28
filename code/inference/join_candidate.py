@@ -10,6 +10,8 @@ from core.schema import q_ident
 from inference.primary_key import PrimaryKeyCandidate
 from colorama import init, Fore, Style
 
+from core.clickhouse_manager import clickhouse_manager
+
 logger = get_logger(__name__)
 
 
@@ -189,313 +191,227 @@ class JoinEngine:
             for row in rows
         ]
 
-    '''def evaluate_candidates(
-        self,
-        primary_keys: list[PrimaryKeyCandidate],
-        min_success_ratio: float = 0.95,
-        max_workers: int = 8,
-    ) -> list[JoinPrimaryKeyCandidate]:
-        """
-        Discover all foreign-key relationships in the database.
-
-        Optimisations vs. version originale :
-        - Index colonnes par type : accès O(1) au lieu de scan linéaire
-        - Deux phases séparées : collecte CPU, puis exécution I/O parallèle
-        - ThreadPoolExecutor : les requêtes SQL tournent en parallèle
-        - should_skip_pair retiré là où le filtrage par type l'a rendu redondant
-        """
-        import itertools
-        from collections import defaultdict
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        source_columns = self.load_source_columns()
-
-        # Index principal : table → colonnes
-        cols_by_table: dict[str, list] = defaultdict(list)
-        # Index par type : table → type_nettoyé → colonnes  (évite le scan linéaire)
-        cols_by_table_type: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-
-        print('\n Creation des colonnes')
-
-        for col in source_columns:
-            cols_by_table[col.table_name].append(col)
-            cols_by_table_type[col.table_name][self._clean_type(col.column_type)].append(col)
-
-        print('\n Phase 1 : collecte des paires valides (CPU-only, pas de SQL)')
-
-        tasks: list[tuple[str, str, PrimaryKeyCandidate]] = []
-
-        time = datetime.now()
-        iter1 = 0
-        iter2 = 0
-        iter3 = 0
-
-        for primary_key in primary_keys:
-
-            iter1 += 1
-            Rtime = datetime.now() - time
-            print(f'Boucle 1 : {iter1} || temps écoulé : {Rtime}')
-
-            target_cols  = [c.strip() for c in primary_key.column_name.split(",")]
-            target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
-            is_composite = len(target_cols) > 1
-
-            for table_name in cols_by_table:
-
-                iter2 += 1
-                Rtime = datetime.now() - time
-                print(Fore.GREEN + f'Boucle 2 : {iter2} || temps écoulé : {Rtime}' + Style.RESET_ALL)
-
-                if table_name == primary_key.table_name:
-                    continue
-
-                if not is_composite:
-                    # Accès direct par type : pas de scan de toutes les colonnes
-                    target_type = target_types[0]
-                    matching_cols = cols_by_table_type[table_name].get(target_type, [])
-                    for src in matching_cols:
-
-                        iter3 += 1
-                        Rtime = datetime.now() - time
-                        print(Fore.YELLOW + f'Boucle 3 : {iter3} || temps écoulé : {Rtime}' + Style.RESET_ALL)
-
-                        # Type déjà vérifié par l'index ; seule la table est à checker
-                        # (should_skip_pair ferait exactement ça — on l'inline pour éviter l'appel)
-                        tasks.append((table_name, src.column_name, primary_key))
-
-                else:
-                    # Pools par position, construits depuis l'index de types
-                    pools = [
-                        cols_by_table_type[table_name].get(t, [])
-                        for t in target_types
-                    ]
-                    # Si une position n'a aucune colonne candidate → skip immédiat
-                    if any(len(pool) == 0 for pool in pools):
-                        continue
-
-                    for combo in itertools.product(*pools):
-
-                        iter3 += 1
-                        Rtime = datetime.now() - time
-                        print(Fore.RED + f'\rBoucle 3 : {iter3} || temps écoulé : {Rtime}' + Style.RESET_ALL)
-
-                        # Pas de colonne dupliquée dans le combo
-                        if len({c.column_name for c in combo}) != len(combo):
-                            continue
-                        tasks.append((
-                            table_name,
-                            ", ".join(c.column_name for c in combo),
-                            primary_key,
-                        ))
-
-        # ── Phase 2 : exécution parallèle des JOIN SQL ────────────────────────────
-        candidates: list[JoinPrimaryKeyCandidate] = []
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {
-                executor.submit(
-                    self.evaluate_join_to_primary_key,
-                    source_table=table_name,
-                    source_column=combo_str,
-                    primary_key=pk,
-                ): (table_name, combo_str, pk)
-                for table_name, combo_str, pk in tasks
-            }
-
-            for future in as_completed(future_to_task):
-                try:
-                    result = future.result()
-                    if result.join_success_ratio >= min_success_ratio:
-                        candidates.append(result)
-                except Exception as exc:
-                    table_name, combo_str, pk = future_to_task[future]
-                    # Logguer sans faire planter tout le batch
-                    print(f"[WARN] JOIN échoué : {table_name}.{combo_str} → {pk.table_name} : {exc}")
-
-        return candidates'''
-
-    MAX_COMPOSITE_COLS = 3   # FK à plus de 3 colonnes → ignorée
-    MAX_COMBOS_PER_BATCH = 500
-
     def evaluate_candidates(
         self,
         primary_keys: list[PrimaryKeyCandidate],
         min_success_ratio: float = 0.95,
-        max_workers: int = 8,
-        max_composite_cols: int = MAX_COMPOSITE_COLS,
-        max_combos_per_batch: int = MAX_COMBOS_PER_BATCH,
+        max_composite_cols: int = 3,
+        source_columns : list[SourceColumn] |None = None
     ) -> list[JoinPrimaryKeyCandidate]:
         import itertools
         from collections import defaultdict
-        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        source_columns = self.load_source_columns()
+        '''
+        Discover all foreign-key relationships across the database.
 
-        cols_by_table: dict[str, list] = defaultdict(list)
+        For each known primary key, iterates over every other table and identifies
+        source columns whose values are statistically covered by that PK, using
+        a LEFT JOIN success ratio. Only pairs at or above min_success_ratio are
+        returned as valid FK candidates.
+
+        Composite PKs exceeding max_composite_cols are skipped entirely — a PK
+        with many columns is almost certainly a fact-table row key rather than
+        a referenceable dimension key, and the cartesian product of candidate
+        column combinations would be computationally prohibitive.
+
+        Source columns are looked up via a type index (table → type → columns)
+        to avoid scanning all columns on every iteration. For composite PKs,
+        only combinations where each position has a type-compatible column are
+        generated (itertools.product over per-position pools), and combinations
+        reusing the same source column are discarded.
+        '''
+
+        show_calculation = False
+
+        if source_columns is None :
+            source_columns = self.load_source_columns()
+
+        cols_by_table = defaultdict(list)
         cols_by_table_type: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
         for col in source_columns:
             cols_by_table[col.table_name].append(col)
             cols_by_table_type[col.table_name][self._clean_type(col.column_type)].append(col)
 
-        # ── Phase 1 : grouper les combos par (source_table, primary_key) ──────────
-        # Structure : { (source_table, primary_key) → [combo_str, ...] }
-        batches: dict[tuple, tuple[PrimaryKeyCandidate, list[str]]] = {}
+        candidates = []
 
         time = datetime.now()
-        iter1 = 0
-        iter2 = 0
-        iter3 = 0
+        iter = 0
 
         for primary_key in primary_keys:
-
-            iter1 += 1
-            Rtime = datetime.now() - time
-            print(f'\rBoucle 1 : {iter1} || temps écoulé : {Rtime}', end='')
-
             target_cols  = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
-            is_composite = len(target_types) > 1
+            is_composite = len(target_cols) > 1
+
+            if show_calculation:
+                iter += 1
+                Rtime = datetime.now() - time
+                print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
             if is_composite and len(target_cols) > max_composite_cols:
-                print(f"[SKIP] PK composite ignorée ({len(target_cols)} cols) : "
-                      f"{primary_key.table_name}.{primary_key.column_name}")
+                print(f"[SKIP] composite PK is too long ({len(target_cols)} cols) : "
+                    f"{primary_key.table_name}.{primary_key.column_name}")
                 continue
 
             for table_name in cols_by_table:
 
-                iter2 += 1
-                Rtime = datetime.now() - time
-                print(Fore.GREEN + f'\rBoucle 2 : {iter2} || temps écoulé : {Rtime}', end='' + Style.RESET_ALL)
+                if show_calculation:
+                    iter += 1
+                    Rtime = datetime.now() - time
+                    print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
                 if table_name == primary_key.table_name:
                     continue
 
-                batch_key = (table_name, primary_key.table_name, primary_key.column_name)
-
-                if batch_key not in batches:
-                    batches[batch_key] = (primary_key, [])
-
-                _, combo_list = batches[batch_key]
+                valid_source_combos = []
 
                 if not is_composite:
-                    matching = cols_by_table_type[table_name].get(target_types[0], [])
-                    for src in matching:
-                        combo_list.append(src.column_name)
+                    for src in cols_by_table_type[table_name].get(target_types[0], []):
+                        valid_source_combos.append(src.column_name)
 
                 else:
-                    pools = [cols_by_table_type[table_name].get(t, []) for t in target_types]
+                    pools = [
+                        cols_by_table_type[table_name].get(t, [])
+                        for t in target_types
+                    ]
                     if any(len(p) == 0 for p in pools):
                         continue
+
                     for combo in itertools.product(*pools):
 
-                        iter3 += 1
-                        Rtime = datetime.now() - time
-                        print(Fore.YELLOW + f'\rBoucle 3 : {iter3} || temps écoulé : {Rtime}', end='' + Style.RESET_ALL)
-
-                        if len(combo_list) >= max_combos_per_batch:
-                            print(f"[CAP] {table_name} vs {primary_key.table_name} "
-                                  f"tronqué à {max_combos_per_batch} combos")
-                            break
+                        if show_calculation:
+                            iter += 1
+                            Rtime = datetime.now() - time
+                            print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
                         if len({c.column_name for c in combo}) != len(combo):
                             continue
-                        combo_list.append(", ".join(c.column_name for c in combo))
+                        valid_source_combos.append(", ".join(c.column_name for c in combo))
 
-        # ── Phase 2 : une requête SQL par batch, en parallèle ────────────────────
-        candidates: list[JoinPrimaryKeyCandidate] = []
+                for combo_str in valid_source_combos:
 
-        def evaluate_batch(
-            source_table: str,
-            primary_key: PrimaryKeyCandidate,
-            combo_strs: list[str],
-        ) -> list[JoinPrimaryKeyCandidate]:
-            """
-            Évalue toutes les colonnes candidates contre une PK
-            en un seul scan de la source_table.
-            """
-            results = self.evaluate_join_batch(
-                source_table=source_table,
-                primary_key=primary_key,
-                combo_strs=combo_strs,
-            )
-            return [r for r in results if r.join_success_ratio >= min_success_ratio]
+                    if show_calculation:
+                        iter += 1
+                        Rtime = datetime.now() - time
+                        print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(evaluate_batch, table_name, pk, combos): (table_name, pk)
-                for (table_name, _, __), (pk, combos) in batches.items()
-                if combos
-            }
-            for future in as_completed(futures):
-
-                iter3 += 1
-                Rtime = datetime.now() - time
-                print(Fore.RED + f'\rBoucle 3 : {iter3} || temps écoulé : {Rtime}', end= '' + Style.RESET_ALL)
-
-                try:
-                    candidates.extend(future.result())
-                except Exception as exc:
-                    table_name, pk = futures[future]
-                    print(f"[WARN] Batch échoué : {table_name} → {pk.table_name} : {exc}")
+                    result = self.evaluate_join_to_primary_key(
+                        source_table=table_name,
+                        source_column=combo_str,
+                        primary_key=primary_key,
+                    )
+                    if result.join_success_ratio >= min_success_ratio:
+                        candidates.append(result)
 
         return candidates
     
-    def evaluate_join_batch(
-        self,
-        source_table: str,
-        primary_key: PrimaryKeyCandidate,
-        combo_strs: list[str],
-    ) -> list[JoinPrimaryKeyCandidate]:
-
-        pk_table = primary_key.table_name
-        pk_cols  = [c.strip() for c in primary_key.column_name.split(",")]
-        is_composite = len(pk_cols) > 1
-
-        if is_composite:
-            pk_tuple = f"({', '.join(q_ident(c) for c in pk_cols)})"
-            pk_subq  = f"(SELECT {pk_tuple} FROM {q_ident(pk_table)})"
-        else:
-            pk_subq = f"(SELECT {q_ident(pk_cols[0])} FROM {q_ident(pk_table)})"
-
-        select_parts = []
-        for i, combo_str in enumerate(combo_strs):
-            src_cols = [c.strip() for c in combo_str.split(",")]
-            if is_composite:
-                src_tuple    = f"({', '.join(q_ident(c) for c in src_cols)})"
-                non_null_expr = f"countIf({' AND '.join(f'{q_ident(c)} IS NOT NULL' for c in src_cols)})"
-                match_expr    = f"countIf({src_tuple} IN {pk_subq})"
-            else:
-                non_null_expr = f"countIf({q_ident(src_cols[0])} IS NOT NULL)"
-                match_expr    = f"countIf({q_ident(src_cols[0])} IN {pk_subq})"
-
-            select_parts.append(f"{non_null_expr} AS non_null_{i}")
-            select_parts.append(f"{match_expr} AS matched_{i}")
-
+    def load_column_stats(self) -> dict[tuple[str, str], dict]:
+        '''
+        Load stats from column_profile sorted by (table_name, column_name).
+        '''
         sql = f"""
             SELECT
-                {', '.join(select_parts)}
-            FROM {q_ident(source_table)}
+                table_name,
+                column_name,
+                column_type,
+                distinct_count,
+                min_value,
+                max_value
+            FROM {q_ident(META_DB)}.column_profiles
+            WHERE null_ratio < 1
+            AND NOT startsWith(column_name, '__')
         """
+        rows = self.db.query(sql).result_rows
+        return {
+            (row[0], row[1]): {
+                "column_type": row[2],
+                "distinct_count": row[3],
+                "min_value": row[4],
+                "max_value": row[5],
+            }
+            for row in rows
+        }
 
-        row = self.db.query(sql).result_rows[0]
 
-        results = []
-        for i, combo_str in enumerate(combo_strs):
-            source_non_null_rows = row[i * 2]
-            matched_rows         = row[i * 2 + 1]
-            ratio = matched_rows / source_non_null_rows if source_non_null_rows > 0 else 0.0
+    def _is_numeric_type(self, col_type: str) -> bool:
+        """Retourne True si le type est numérique (Int, Float, Decimal)."""
+        cleaned = self._clean_type(col_type)
+        return any(cleaned.startswith(t) for t in ("Int", "UInt", "Float", "Decimal"))
 
-            results.append(JoinPrimaryKeyCandidate(
-                source_table=source_table,
-                source_column=combo_str,
-                target_table=pk_table,
-                target_column=primary_key.column_name,
-                source_non_null_rows=source_non_null_rows,
-                matched_rows=matched_rows,
-                join_success_ratio=ratio,
-            ))
 
-        return results
+    def prefilter_source_columns(
+        self,
+        primary_keys: list[PrimaryKeyCandidate],
+        source_columns: list[SourceColumn],
+        stats: dict[tuple[str, str], dict],
+    ) -> list[SourceColumn]:
+        '''
+        Remove source columns that cannot be a FK pointing to any known PK.
+
+        Two statistical filters are applied without issuing any SQL query:
+        Cardinality     : a FK column cannot have more distinct values than
+                            its target PK column (some values would be unmatched).
+        Range           : for numeric types, the source range must be a subset
+                            of the PK range — if min(src) < min(pk) or
+                            max(src) > max(pk), those values will never join.
+
+        A column is kept if it passes both filters against at least one
+        type-compatible PK. Columns with no recorded stats are kept by default
+        to avoid false exclusions.
+        '''
+        pk_stats: dict[tuple[str, str], dict] = {}
+        for pk in primary_keys:
+            for col_name in [c.strip() for c in pk.column_name.split(",")]:
+                key = (pk.table_name, col_name)
+                if key in stats:
+                    pk_stats[key] = stats[key]
+
+        kept = []
+        eliminated = 0
+
+        for src in source_columns:
+            src_stat = stats.get((src.table_name, src.column_name))
+            if not src_stat:
+                kept.append(src)
+                continue
+
+            src_type     = self._clean_type(src.column_type)
+            src_distinct = src_stat["distinct_count"]
+            src_min      = src_stat["min_value"]
+            src_max      = src_stat["max_value"]
+            is_numeric   = self._is_numeric_type(src.column_type)
+
+            passes = False
+            for (pk_table, pk_col), pk_stat in pk_stats.items():
+                if pk_table == src.table_name:
+                    continue
+                if self._clean_type(pk_stat["column_type"]) != src_type:
+                    continue 
+
+                pk_distinct = pk_stat["distinct_count"]
+                if src_distinct > pk_distinct:
+                    continue
+
+                if is_numeric and src_min and src_max and pk_stat["min_value"] and pk_stat["max_value"]:
+                    try:
+                        if float(src_min) < float(pk_stat["min_value"]):
+                            continue
+                        if float(src_max) > float(pk_stat["max_value"]):
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                passes = True
+                break
+
+            if passes:
+                kept.append(src)
+            else:
+                eliminated += 1
+
+        print(f"[PREFILTER] {len(source_columns)} columns → {len(kept)} kept "
+            f"({eliminated} removed)")
+        return kept
 
     def store_candidates(
         self,
