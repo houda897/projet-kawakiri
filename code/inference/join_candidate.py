@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 
 from dataclasses import dataclass
 
@@ -7,6 +8,9 @@ from core.logger import get_logger
 from core.schema import q_ident
 
 from inference.primary_key import PrimaryKeyCandidate
+from colorama import init, Fore, Style
+
+from core.clickhouse_manager import clickhouse_manager
 
 logger = get_logger(__name__)
 
@@ -191,58 +195,223 @@ class JoinEngine:
         self,
         primary_keys: list[PrimaryKeyCandidate],
         min_success_ratio: float = 0.95,
+        max_composite_cols: int = 3,
+        source_columns : list[SourceColumn] |None = None
     ) -> list[JoinPrimaryKeyCandidate]:
-        """
-        Discover all foreign-key relationships in the database.
-
-        For each profiled column, tests whether it is covered by any known
-        primary key using a LEFT JOIN. Only pairs with a join success ratio
-        above min_success_ratio are kept.
-
-        This is the main entry point for building the adjacency matrix used
-        to infer the star-schema topology.
-        """
         import itertools
         from collections import defaultdict
 
-        source_columns = self.load_source_columns()
+        '''
+        Discover all foreign-key relationships across the database.
+
+        For each known primary key, iterates over every other table and identifies
+        source columns whose values are statistically covered by that PK, using
+        a LEFT JOIN success ratio. Only pairs at or above min_success_ratio are
+        returned as valid FK candidates.
+
+        Composite PKs exceeding max_composite_cols are skipped entirely — a PK
+        with many columns is almost certainly a fact-table row key rather than
+        a referenceable dimension key, and the cartesian product of candidate
+        column combinations would be computationally prohibitive.
+
+        Source columns are looked up via a type index (table → type → columns)
+        to avoid scanning all columns on every iteration. For composite PKs,
+        only combinations where each position has a type-compatible column are
+        generated (itertools.product over per-position pools), and combinations
+        reusing the same source column are discarded.
+        '''
+
+        show_calculation = False
+
+        if source_columns is None :
+            source_columns = self.load_source_columns()
+
         cols_by_table = defaultdict(list)
+        cols_by_table_type: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
         for col in source_columns:
             cols_by_table[col.table_name].append(col)
+            cols_by_table_type[col.table_name][self._clean_type(col.column_type)].append(col)
 
         candidates = []
 
+        time = datetime.now()
+        iter = 0
+
         for primary_key in primary_keys:
-            target_cols = [c.strip() for c in primary_key.column_name.split(",")]
+            target_cols  = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
 
-            for table_name, t_cols in cols_by_table.items():
+            if show_calculation:
+                iter += 1
+                Rtime = datetime.now() - time
+                print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
+
+            if is_composite and len(target_cols) > max_composite_cols:
+                print(f"[SKIP] composite PK is too long ({len(target_cols)} cols) : "
+                    f"{primary_key.table_name}.{primary_key.column_name}")
+                continue
+
+            for table_name in cols_by_table:
+
+                if show_calculation:
+                    iter += 1
+                    Rtime = datetime.now() - time
+                    print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
+
                 if table_name == primary_key.table_name:
                     continue
 
                 valid_source_combos = []
 
                 if not is_composite:
-                    for src in t_cols:
-                        if not self.should_skip_pair((src,), primary_key):
-                            valid_source_combos.append(src.column_name)
+                    for src in cols_by_table_type[table_name].get(target_types[0], []):
+                        valid_source_combos.append(src.column_name)
+
                 else:
-                    for combo in itertools.permutations(t_cols, len(target_cols)):
-                        if not self.should_skip_pair(combo, primary_key):
-                            valid_source_combos.append(", ".join(c.column_name for c in combo))
+                    pools = [
+                        cols_by_table_type[table_name].get(t, [])
+                        for t in target_types
+                    ]
+                    if any(len(p) == 0 for p in pools):
+                        continue
+
+                    for combo in itertools.product(*pools):
+
+                        if show_calculation:
+                            iter += 1
+                            Rtime = datetime.now() - time
+                            print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
+
+                        if len({c.column_name for c in combo}) != len(combo):
+                            continue
+                        valid_source_combos.append(", ".join(c.column_name for c in combo))
 
                 for combo_str in valid_source_combos:
+
+                    if show_calculation:
+                        iter += 1
+                        Rtime = datetime.now() - time
+                        print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
+
                     result = self.evaluate_join_to_primary_key(
                         source_table=table_name,
                         source_column=combo_str,
                         primary_key=primary_key,
                     )
-
                     if result.join_success_ratio >= min_success_ratio:
                         candidates.append(result)
 
         return candidates
+    
+    def load_column_stats(self) -> dict[tuple[str, str], dict]:
+        '''
+        Load stats from column_profile sorted by (table_name, column_name).
+        '''
+        sql = f"""
+            SELECT
+                table_name,
+                column_name,
+                column_type,
+                distinct_count,
+                min_value,
+                max_value
+            FROM {q_ident(META_DB)}.column_profiles
+            WHERE null_ratio < 1
+            AND NOT startsWith(column_name, '__')
+        """
+        rows = self.db.query(sql).result_rows
+        return {
+            (row[0], row[1]): {
+                "column_type": row[2],
+                "distinct_count": row[3],
+                "min_value": row[4],
+                "max_value": row[5],
+            }
+            for row in rows
+        }
+
+
+    def _is_numeric_type(self, col_type: str) -> bool:
+        """Retourne True si le type est numérique (Int, Float, Decimal)."""
+        cleaned = self._clean_type(col_type)
+        return any(cleaned.startswith(t) for t in ("Int", "UInt", "Float", "Decimal"))
+
+
+    def prefilter_source_columns(
+        self,
+        primary_keys: list[PrimaryKeyCandidate],
+        source_columns: list[SourceColumn],
+        stats: dict[tuple[str, str], dict],
+    ) -> list[SourceColumn]:
+        '''
+        Remove source columns that cannot be a FK pointing to any known PK.
+
+        Two statistical filters are applied without issuing any SQL query:
+        Cardinality     : a FK column cannot have more distinct values than
+                            its target PK column (some values would be unmatched).
+        Range           : for numeric types, the source range must be a subset
+                            of the PK range — if min(src) < min(pk) or
+                            max(src) > max(pk), those values will never join.
+
+        A column is kept if it passes both filters against at least one
+        type-compatible PK. Columns with no recorded stats are kept by default
+        to avoid false exclusions.
+        '''
+        pk_stats: dict[tuple[str, str], dict] = {}
+        for pk in primary_keys:
+            for col_name in [c.strip() for c in pk.column_name.split(",")]:
+                key = (pk.table_name, col_name)
+                if key in stats:
+                    pk_stats[key] = stats[key]
+
+        kept = []
+        eliminated = 0
+
+        for src in source_columns:
+            src_stat = stats.get((src.table_name, src.column_name))
+            if not src_stat:
+                kept.append(src)
+                continue
+
+            src_type     = self._clean_type(src.column_type)
+            src_distinct = src_stat["distinct_count"]
+            src_min      = src_stat["min_value"]
+            src_max      = src_stat["max_value"]
+            is_numeric   = self._is_numeric_type(src.column_type)
+
+            passes = False
+            for (pk_table, pk_col), pk_stat in pk_stats.items():
+                if pk_table == src.table_name:
+                    continue
+                if self._clean_type(pk_stat["column_type"]) != src_type:
+                    continue 
+
+                pk_distinct = pk_stat["distinct_count"]
+                if src_distinct > pk_distinct:
+                    continue
+
+                if is_numeric and src_min and src_max and pk_stat["min_value"] and pk_stat["max_value"]:
+                    try:
+                        if float(src_min) < float(pk_stat["min_value"]):
+                            continue
+                        if float(src_max) > float(pk_stat["max_value"]):
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                passes = True
+                break
+
+            if passes:
+                kept.append(src)
+            else:
+                eliminated += 1
+
+        print(f"[PREFILTER] {len(source_columns)} columns → {len(kept)} kept "
+            f"({eliminated} removed)")
+        return kept
 
     def store_candidates(
         self,
