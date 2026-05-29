@@ -6,8 +6,6 @@ from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
-from colorama import Fore, Style, init
-
 logger = get_logger(__name__)
 
 
@@ -201,21 +199,10 @@ class AdjacencyMatrixEngine:
     @staticmethod
     def print_edges(edges: list[AdjacencyEdge]) -> None:
         '''Print the edges with their evidence label'''
-        init(convert=True)
-        RED = Fore.RED
-        GREEN = Fore.GREEN
-        YELLOW = Fore.YELLOW
-        RESET = Style.RESET_ALL
 
         for edge in edges:
             src = f"{edge.source_table}.{edge.source_columns[0]}"
             tgt = f"{edge.target_table}.{edge.target_columns[0]}"
-            if edge.evidence == "CONFIRMED":
-                color = GREEN
-            elif edge.evidence == "WEAK":
-                color = RED
-            else:
-                color = YELLOW
 
-            logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {color}{edge.evidence}{RESET}")
+            logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {edge.evidence}")
 
