@@ -24,3 +24,9 @@ SEMANTIC_WEIGHTS = {
     "join_success_ratio": 0.34,
     "semantic_similarity": 0.66,
 }
+
+EVALUATE_CANDIDATES = {
+    "COMPOSITE_KEY_COLUMN_RESTRICTION" : 5,
+    "Filter_margin" : 1.1
+    # Calculation for margin -> 1.1 = tolerate 10% more than the pk
+}

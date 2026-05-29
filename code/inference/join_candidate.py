@@ -1,5 +1,4 @@
 from __future__ import annotations
-from datetime import datetime
 
 from dataclasses import dataclass
 
@@ -8,9 +7,10 @@ from core.logger import get_logger
 from core.schema import q_ident
 
 from inference.primary_key import PrimaryKeyCandidate
-from colorama import init, Fore, Style
 
 from core.clickhouse_manager import clickhouse_manager
+
+from config.scoring import EVALUATE_CANDIDATES
 
 logger = get_logger(__name__)
 
@@ -195,7 +195,7 @@ class JoinEngine:
         self,
         primary_keys: list[PrimaryKeyCandidate],
         min_success_ratio: float = 0.95,
-        max_composite_cols: int = 3,
+        max_composite_cols: int = EVALUATE_CANDIDATES["COMPOSITE_KEY_COLUMN_RESTRICTION"],
         source_columns : list[SourceColumn] |None = None
     ) -> list[JoinPrimaryKeyCandidate]:
         import itertools
@@ -221,8 +221,6 @@ class JoinEngine:
         reusing the same source column are discarded.
         '''
 
-        show_calculation = False
-
         if source_columns is None :
             source_columns = self.load_source_columns()
 
@@ -235,30 +233,17 @@ class JoinEngine:
 
         candidates = []
 
-        time = datetime.now()
-        iter = 0
-
         for primary_key in primary_keys:
             target_cols  = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
 
-            if show_calculation:
-                iter += 1
-                Rtime = datetime.now() - time
-                print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
-
             if is_composite and len(target_cols) > max_composite_cols:
-                print(f"[SKIP] composite PK is too long ({len(target_cols)} cols) : "
+                logger.info(f"[SKIP] composite PK is too long ({len(target_cols)} cols) : "
                     f"{primary_key.table_name}.{primary_key.column_name}")
                 continue
 
             for table_name in cols_by_table:
-
-                if show_calculation:
-                    iter += 1
-                    Rtime = datetime.now() - time
-                    print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
                 if table_name == primary_key.table_name:
                     continue
@@ -279,21 +264,11 @@ class JoinEngine:
 
                     for combo in itertools.product(*pools):
 
-                        if show_calculation:
-                            iter += 1
-                            Rtime = datetime.now() - time
-                            print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
-
                         if len({c.column_name for c in combo}) != len(combo):
                             continue
                         valid_source_combos.append(", ".join(c.column_name for c in combo))
 
                 for combo_str in valid_source_combos:
-
-                    if show_calculation:
-                        iter += 1
-                        Rtime = datetime.now() - time
-                        print(Fore.GREEN + f'\rLoop iteration : {iter} || ttime elapsed : {Rtime}', end='' + Style.RESET_ALL)
 
                     result = self.evaluate_join_to_primary_key(
                         source_table=table_name,
@@ -375,41 +350,55 @@ class JoinEngine:
                 kept.append(src)
                 continue
 
-            src_type     = self._clean_type(src.column_type)
             src_distinct = src_stat["distinct_count"]
             src_min      = src_stat["min_value"]
             src_max      = src_stat["max_value"]
             is_numeric   = self._is_numeric_type(src.column_type)
 
             passes = False
-            for (pk_table, pk_col), pk_stat in pk_stats.items():
-                if pk_table == src.table_name:
-                    continue
-                if self._clean_type(pk_stat["column_type"]) != src_type:
-                    continue 
+            for pk in primary_keys:
+                for pk_col in [c.strip() for c in pk.column_name.split(",")]:
 
-                pk_distinct = pk_stat["distinct_count"]
-                if src_distinct > pk_distinct:
-                    continue
+                    # ── Compatibilité structurelle centralisée dans should_skip_pair ──
+                    dummy_src = (src,)
+                    if self.should_skip_pair(dummy_src, pk):
+                        continue
 
-                if is_numeric and src_min and src_max and pk_stat["min_value"] and pk_stat["max_value"]:
-                    try:
-                        if float(src_min) < float(pk_stat["min_value"]):
-                            continue
-                        if float(src_max) > float(pk_stat["max_value"]):
-                            continue
-                    except (ValueError, TypeError):
-                        pass
+                    pk_stat = pk_stats.get((pk.table_name, pk_col))
+                    if not pk_stat:
+                        passes = True  # pas de stats PK → on garde par sécurité
+                        break
 
-                passes = True
-                break
+                    # ── Filtre 1 : cardinalité avec marge ──
+                    pk_distinct = pk_stat["distinct_count"]
+                    if src_distinct > pk_distinct * EVALUATE_CANDIDATES["Filter_margin"]:
+                        continue
+
+                    # ── Filtre 2 : plage numérique ──
+                    if is_numeric and all([src_min, src_max,
+                                        pk_stat["min_value"], pk_stat["max_value"]]):
+                        try:
+                            if float(src_min) < float(pk_stat["min_value"]):
+                                continue
+                            if float(src_max) > float(pk_stat["max_value"]):
+                                continue
+                        except (ValueError, TypeError):
+                            pass  # conversion impossible → on ne filtre pas
+
+                    passes = True
+                    break
+
+                if passes:
+                    break
 
             if passes:
                 kept.append(src)
             else:
                 eliminated += 1
+                logger.info(f" Col name : {src.column_name}, col type : {src.column_type}, "
+                    f"table name : {src.table_name}")
 
-        print(f"[PREFILTER] {len(source_columns)} columns → {len(kept)} kept "
+        logger.info(f"[PREFILTER] {len(source_columns)} columns → {len(kept)} kept "
             f"({eliminated} removed)")
         return kept
 
