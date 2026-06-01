@@ -13,7 +13,7 @@ from core.schema import q_ident
 
 logger = get_logger(__name__)
 
-NULL_TOKENS = {"", "null", "none", "nan", "na", "n/a"}
+NULL_TOKENS = {"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"}
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
 
@@ -67,7 +67,7 @@ class CsvIngestionEngine:
         csv_path: str | Path,
         table_name: str | None = None,
         database: str = CH_DB,
-        sample_size: int = 5000,
+        sample_size: int | None = None,
         if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> dict:
         """
@@ -149,7 +149,7 @@ class CsvIngestionEngine:
         self,
         folder_path: str | Path,
         database: str = CH_DB,
-        sample_size: int = 5000,
+        sample_size: int | None = None,
         if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> list[dict]:
         folder = Path(folder_path)
@@ -189,7 +189,7 @@ class CsvIngestionEngine:
         self,
         path: Path,
         delimiter: str,
-        sample_size: int,
+        sample_size: int | None,
     ) -> tuple[list[str], list[dict]]:
         """Read a small CSV sample and normalize column names."""
 
@@ -206,7 +206,7 @@ class CsvIngestionEngine:
 
             rows = []
             for index, row in enumerate(reader):
-                if index >= sample_size:
+                if sample_size is not None and index >= sample_size:
                     break
 
                 self.check_malformed_row(row, path, index + 2, delimiter)
@@ -259,10 +259,10 @@ class CsvIngestionEngine:
             return "Int64"
 
         if all(self.is_datetime(value) for value in values):
-            return "DateTime"
+            return "String"
 
         if all(self.is_date(value) for value in values):
-            return "Date"
+            return "Date32"
 
         if all(self.is_float(value) for value in values):
             return "Float64"
@@ -605,7 +605,7 @@ ORDER BY tuple()
             if base_type == "Float64":
                 return float(value.replace(",", "."))
 
-            if base_type == "Date":
+            if base_type in ("Date", "Date32"):
                 return self.parse_date(value)
 
             if base_type == "DateTime":
