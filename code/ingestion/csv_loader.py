@@ -53,10 +53,6 @@ class SampleCheck:
 class CsvIngestionEngine:
     """
     Import CSV files into ClickHouse while keeping metadata about each import.
-
-    The engine detects the separator, normalizes column names, infers simple
-    ClickHouse types, checks a few rows before insertion, creates the table, and
-    inserts the file in batches.
     """
 
     def __init__(self, db: clickhouse_manager):
@@ -70,15 +66,6 @@ class CsvIngestionEngine:
         sample_size: int | None = None,
         if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> dict:
-        """
-        Import a single CSV file into ClickHouse.
-
-        Steps: detect delimiter → sample rows → infer types → validate a few rows
-        → create table → insert in batches → log metadata.
-
-        Returns a dict matching the IngestionResult dataclass fields.
-        Raises an exception (and logs it) if anything fails after the table is created.
-        """
         path = Path(csv_path)
         table = table_name or self.clean_identifier(path.stem)
 
@@ -176,8 +163,6 @@ class CsvIngestionEngine:
         return results
 
     def detect_delimiter(self, path: Path) -> str:
-        """Detect the CSV separator from a short text sample."""
-
         sample = path.read_text(encoding="utf-8-sig", errors="ignore")[:8192]
 
         try:
@@ -191,8 +176,6 @@ class CsvIngestionEngine:
         delimiter: str,
         sample_size: int | None,
     ) -> tuple[list[str], list[dict]]:
-        """Read a small CSV sample and normalize column names."""
-
         with path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
             original_headers = reader.fieldnames or []
@@ -205,18 +188,22 @@ class CsvIngestionEngine:
             )
 
             rows = []
+
             for index, row in enumerate(reader):
                 if sample_size is not None and index >= sample_size:
                     break
 
                 self.check_malformed_row(row, path, index + 2, delimiter)
 
-                rows.append(
-                    {
-                        headers[i]: row.get(original_headers[i])
-                        for i in range(len(original_headers))
-                    }
-                )
+                row_data = {
+                    headers[i]: row.get(original_headers[i])
+                    for i in range(len(original_headers))
+                }
+
+                if self.is_dirty_row(row_data):
+                    continue
+
+                rows.append(row_data)
 
         return headers, rows
 
@@ -225,8 +212,6 @@ class CsvIngestionEngine:
         headers: list[str],
         rows: list[dict],
     ) -> list[DetectedColumn]:
-        """Infer simple ClickHouse types from observed CSV values."""
-
         columns = []
 
         for header in headers:
@@ -250,8 +235,6 @@ class CsvIngestionEngine:
         return columns
 
     def detect_type(self, values: list[str]) -> str:
-        """Choose the most specific ClickHouse type supported by all observed values."""
-
         if not values:
             return "String"
 
@@ -276,13 +259,6 @@ class CsvIngestionEngine:
         columns: list[DetectedColumn],
         row_limit: int = 5,
     ) -> SampleCheck:
-        """
-        Check a few rows before loading the full file.
-
-        This catches delimiter mistakes, invalid numbers, invalid dates, and
-        missing values before the full import starts.
-        """
-
         checked_rows = 0
 
         try:
@@ -296,9 +272,16 @@ class CsvIngestionEngine:
 
                     self.check_malformed_row(row, path, line_number, delimiter)
 
-                    for index, column in enumerate(columns):
-                        value = row.get(original_headers[index])
-                        self.cast_value(value, column, line_number)
+                    row_data = {
+                        columns[index].name: row.get(original_headers[index])
+                        for index in range(len(columns))
+                    }
+
+                    if self.is_dirty_row(row_data):
+                        continue
+
+                    for column in columns:
+                        self.cast_value(row_data[column.name], column, line_number)
 
                     checked_rows += 1
 
@@ -325,8 +308,6 @@ class CsvIngestionEngine:
         columns: list[DetectedColumn],
         if_exists: Literal["replace", "append", "fail"],
     ) -> None:
-        """Create the target table with explicit behavior if it already exists."""
-
         if not columns:
             raise ValueError(f"Cannot create table '{table}': no columns were detected.")
 
@@ -353,6 +334,7 @@ class CsvIngestionEngine:
         WHERE database = %(database)s
           AND name = %(table)s
         """
+
         row = self.db.query(
             sql,
             parameters={"database": database, "table": table},
@@ -389,8 +371,6 @@ ORDER BY tuple()
         columns: list[DetectedColumn],
         delimiter: str,
     ) -> int:
-        """Insert CSV rows in batches so large files do not stay fully in memory."""
-
         column_names = [column.name for column in columns]
         total_rows = 0
         batch: list[list[Any]] = []
@@ -402,14 +382,18 @@ ORDER BY tuple()
             for line_number, row in enumerate(reader, start=2):
                 self.check_malformed_row(row, path, line_number, delimiter)
 
+                row_data = {
+                    column_names[index]: row.get(original_headers[index])
+                    for index in range(len(columns))
+                }
+
+                if self.is_dirty_row(row_data):
+                    continue
+
                 batch.append(
                     [
-                        self.cast_value(
-                            row.get(original_headers[index]),
-                            columns[index],
-                            line_number,
-                        )
-                        for index in range(len(columns))
+                        self.cast_value(row_data[column.name], column, line_number)
+                        for column in columns
                     ]
                 )
 
@@ -539,6 +523,39 @@ ORDER BY tuple()
             )
 
     @staticmethod
+    def is_dirty_row(row_dict: dict[str, str | None]) -> bool:
+        if not row_dict:
+            return True
+
+        values = [
+            value.strip()
+            for value in row_dict.values()
+            if value is not None and value.strip() != ""
+        ]
+
+        if not values:
+            return True
+
+        metadata_prefixes = (
+            "export date",
+            "exported",
+            "source",
+            "generated",
+            "report",
+        )
+
+        for value in values:
+            value_clean = value.lower()
+
+            if value_clean.startswith(metadata_prefixes):
+                return True
+
+            if "---" in value_clean:
+                return True
+
+        return False
+
+    @staticmethod
     def clean_identifier(value: str | None) -> str:
         text = (value or "").strip()
         cleaned = ""
@@ -659,7 +676,9 @@ ORDER BY tuple()
             try:
                 if fmt == "%Y-%m-%d":
                     return date.fromisoformat(value)
+
                 return datetime.strptime(value, fmt).date()
+
             except ValueError:
                 pass
 

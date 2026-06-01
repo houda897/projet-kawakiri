@@ -43,6 +43,9 @@ class SemanticEngine:
         if not norm1 or not norm2:
             return 1.0 if norm1 == norm2 else 0.0
 
+        if "date" in norm1 and "date" in norm2:
+            return 1.0
+
         score = fuzz.ratio(norm1, norm2) / 100.0
 
         return round(score, 4)
