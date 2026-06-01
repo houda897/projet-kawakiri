@@ -84,6 +84,28 @@ class CompositeKeyEngine:
 
                 logger.info("Composite key found for %s: %s", table, combo_names)
 
+                cleaned_combo = list(current_combo)
+                
+                columns_to_test = sorted(
+                    current_combo, 
+                    key=lambda col: col.identifiability_score
+                )
+                
+                for col_to_test in columns_to_test:
+                    test_combo = [c for c in cleaned_combo if c != col_to_test]
+                    
+                    if len(test_combo) >= 2:
+                        test_names = [c.column_name for c in test_combo]
+                        
+                        if check_functional_dependency(database_name, table, test_names, self.db):
+                            cleaned_combo = test_combo
+
+                current_combo = cleaned_combo
+                combo_names = tuple(col.column_name for col in current_combo)
+                combo_types = tuple(col.column_type for col in current_combo)
+
+                logger.info("Final composite key for %s after pruning: %s\n", table, combo_names)
+
                 composite_candidates.append(
                     self.ranking_policy.build_candidate(
                         database_name=database_name,
