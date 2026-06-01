@@ -19,6 +19,9 @@ class TableRoleCandidate:
     row_count: int
     outgoing_edges: int
     incoming_edges: int
+    numeric_columns: int
+    text_columns: int
+    date_columns: int
     has_primary_key: bool
     role: str
     confidence: float
@@ -29,8 +32,9 @@ class TableRoleEngine:
     """
     Infer table roles from the adjacency graph.
 
-    A fact table usually points to several dimensions.
-    A dimension table usually has a primary key and receives links.
+    A fact table usually points to several dimensions and carries mostly
+    numeric measures. A dimension table usually has a primary key and descriptive
+    columns, and can also point to other dimensions in a snowflake schema.
     """
 
     def __init__(self, db: clickhouse_manager):
@@ -41,6 +45,7 @@ class TableRoleEngine:
         primary_key_tables = self.load_primary_key_tables()
         outgoing_edges = self.load_outgoing_edges()
         incoming_edges = self.load_incoming_edges()
+        column_type_counts = self.load_column_type_counts()
 
         results = []
 
@@ -49,11 +54,22 @@ class TableRoleEngine:
             incoming_count = incoming_edges.get(table_name, 0)
             has_primary_key = table_name in primary_key_tables
 
+            type_counts = column_type_counts.get(
+                table_name,
+                {"numeric": 0, "text": 0, "date": 0},
+            )
+            numeric_columns = type_counts["numeric"]
+            text_columns = type_counts["text"]
+            date_columns = type_counts["date"]
+
             role, confidence, reason = self.classify_table(
                 row_count=row_count,
                 outgoing_edges=outgoing_count,
                 incoming_edges=incoming_count,
                 has_primary_key=has_primary_key,
+                numeric_columns=numeric_columns,
+                text_columns=text_columns,
+                date_columns=date_columns,
             )
 
             results.append(
@@ -62,6 +78,9 @@ class TableRoleEngine:
                     row_count=row_count,
                     outgoing_edges=outgoing_count,
                     incoming_edges=incoming_count,
+                    numeric_columns=numeric_columns,
+                    text_columns=text_columns,
+                    date_columns=date_columns,
                     has_primary_key=has_primary_key,
                     role=role,
                     confidence=confidence,
@@ -101,6 +120,7 @@ class TableRoleEngine:
         WHERE evidence IN ('CONFIRMED', 'SEMANTIC_CONFIRMED')
         GROUP BY source_table
         """
+
         rows = self.db.query(sql).result_rows
         return {row[0]: row[1] for row in rows}
 
@@ -117,52 +137,56 @@ class TableRoleEngine:
         rows = self.db.query(sql).result_rows
         return {row[0]: row[1] for row in rows}
 
-    '''@staticmethod
-    def classify_table(
-        row_count: int,
-        outgoing_edges: int,
-        incoming_edges: int,
-        has_primary_key: bool,
-    ) -> tuple[str, float, str]:
-        if outgoing_edges >= 2:
-            return (
-                "FACT",
-                0.85,
-                "table_has_multiple_confirmed_links_to_other_tables",
-            )
+    def load_column_type_counts(self) -> dict[str, dict[str, int]]:
+        sql = f"""
+        SELECT
+            table_name,
+            countIf(
+                position(column_type, 'Int') > 0
+                OR position(column_type, 'UInt') > 0
+                OR position(column_type, 'Float') > 0
+                OR position(column_type, 'Decimal') > 0
+            ) AS numeric_columns,
+            countIf(position(column_type, 'String') > 0) AS text_columns,
+            countIf(position(column_type, 'Date') > 0) AS date_columns
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE NOT startsWith(column_name, '__')
+        GROUP BY table_name
+        """
 
-        if has_primary_key and incoming_edges >= 1:
-            return (
-                "DIMENSION",
-                0.85,
-                "table_has_primary_key_and_is_referenced_by_other_tables",
-            )
+        rows = self.db.query(sql).result_rows
 
-        if has_primary_key:
-            return (
-                "DIMENSION",
-                0.65,
-                "table_has_primary_key_but_few_confirmed_links",
-            )
+        return {
+            row[0]: {
+                "numeric": row[1],
+                "text": row[2],
+                "date": row[3],
+            }
+            for row in rows
+        }
 
-        return (
-            "UNKNOWN",
-            0.4,
-            "not_enough_evidence_to_choose_fact_or_dimension",
-        )
-    '''
     @staticmethod
     def classify_table(
         row_count: int,
         outgoing_edges: int,
         incoming_edges: int,
         has_primary_key: bool,
+        numeric_columns: int,
+        text_columns: int,
+        date_columns: int,
     ) -> tuple[str, float, str]:
-        if outgoing_edges >= 2 and row_count >= 5:
+        if outgoing_edges >= 2 and row_count >= 5 and numeric_columns > text_columns:
             return (
                 "FACT",
                 0.85,
-                "table_has_many_rows_and_multiple_links_to_other_tables",
+                "table_has_many_links_and_mostly_numeric_columns",
+            )
+
+        if outgoing_edges >= 1 and has_primary_key and text_columns >= numeric_columns:
+            return (
+                "DIMENSION",
+                0.75,
+                "table_has_links_but_mostly_descriptive_columns",
             )
 
         if has_primary_key and incoming_edges >= 1:
@@ -193,12 +217,16 @@ class TableRoleEngine:
 
         for result in results:
             logger.info(
-                "%s | role=%s | rows=%s | outgoing=%s | incoming=%s | confidence=%s | reason=%s",
+                "%s | role=%s | rows=%s | outgoing=%s | incoming=%s | "
+                "numeric=%s | text=%s | date=%s | confidence=%s | reason=%s",
                 result.table_name,
                 result.role,
                 result.row_count,
                 result.outgoing_edges,
                 result.incoming_edges,
+                result.numeric_columns,
+                result.text_columns,
+                result.date_columns,
                 result.confidence,
                 result.reason,
             )
