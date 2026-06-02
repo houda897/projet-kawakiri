@@ -14,8 +14,9 @@ class SemanticEngine:
         Those patterns will be stripped out to normalise column names
         '''
         self.noise_patterns = [
-            r'^id_', r'^fk_', r'^pk_',  # Préfixes
-            r'_id$', r'_fk$', r'_key$'  # Suffixes
+            r'^id_', r'^fk_', r'^pk_',  # Prefix
+            r'_id$', r'_fk$', r'_key$',  # Suffix
+            r'id$', r'fk$', r'key$'     # Suffix
         ]
         self.noise_regex = re.compile('|'.join(self.noise_patterns), re.IGNORECASE)
 
@@ -24,7 +25,7 @@ class SemanticEngine:
         if not column_name:
             return ""
 
-        name = column_name.lower()
+        name = column_name.strip().lower()
 
         prev_name = ""
         while name != prev_name:
@@ -76,9 +77,9 @@ class SemanticEngine:
                 (SEMANTIC_WEIGHTS["semantic_similarity"] * semantic_score), 
                 6
             )
-            if semantic_score >= SEMANTIC_THRESHOLDS["confirmed"] and edge.join_success_ratio > 0.9:
+            if hybrid_score >= SEMANTIC_THRESHOLDS["confirmed"]:
                 evidence_label = "CONFIRMED"
-            elif semantic_score <= SEMANTIC_THRESHOLDS["coincidence"] and edge.join_success_ratio > 0.9:
+            elif hybrid_score <= SEMANTIC_THRESHOLDS["coincidence"]:
                 evidence_label = "WEAK"
             else:
                 evidence_label = "COINCIDENCE"

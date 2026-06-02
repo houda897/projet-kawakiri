@@ -20,9 +20,7 @@ def test_ensure_meta_schema_cree_la_table_column_stats() -> None:
 
     ensure_meta_schema(db)
 
-    # ensure_meta_schema appelle command() plusieurs fois (une par table)
     assert db.command.call_count > 0
-    # Vérifie qu'au moins un appel crée la table column_stats
     all_sql = " ".join(str(call) for call in db.command.call_args_list)
     assert "column_stats" in all_sql
     assert "entropy_ratio" in all_sql
