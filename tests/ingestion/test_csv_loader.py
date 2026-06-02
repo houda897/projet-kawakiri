@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock
 
-from ingestion.csv_loader import CsvIngestionEngine,DetectedColumn
+from config.scoring import INGESTION_SETTINGS
+from ingestion.csv_loader import CsvIngestionEngine, DetectedColumn
 
 
 @pytest.fixture
@@ -156,6 +157,26 @@ def test_infer_column_types_marks_nullable_columns(engine: CsvIngestionEngine) -
         DetectedColumn(name="created_at", detected_type="String", nullable=False),
         DetectedColumn(name="label", detected_type="Nullable(String)", nullable=True),
     ]
+
+
+def test_infer_column_types_can_infer_temporal_columns(engine: CsvIngestionEngine) -> None:
+    previous_setting = INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"]
+    INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = True
+
+    try:
+        headers = ["created_at"]
+        rows = [
+            {"created_at": "2024-01-01 10:00:00"},
+            {"created_at": "2024-01-02 11:00:00"},
+        ]
+
+        inferred = engine.infer_column_types(headers, rows)
+
+        assert inferred == [
+            DetectedColumn(name="created_at", detected_type="DateTime", nullable=False),
+        ]
+    finally:
+        INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = previous_setting
 
 
 def test_first_rows_before_import_marks_human_review(

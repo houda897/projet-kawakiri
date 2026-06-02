@@ -1,40 +1,16 @@
-import re
-from rapidfuzz import fuzz
-from core.logger import get_logger
-from inference.adjacency import AdjacencyEdge
 from config.scoring import SEMANTIC_THRESHOLDS, SEMANTIC_WEIGHTS
+from core.logger import get_logger
+from core.naming import normalize_column_name as normalize_key_column_name
+from inference.adjacency import AdjacencyEdge
+from rapidfuzz import fuzz
 
 logger = get_logger(__name__)
 
 class SemanticEngine:
     '''Semantic engine that computes a similarity (with Levenshtein distance) score between column names to enrich join candidates'''
-    def __init__(self):
-        '''
-        Define usual prefix and suffix patterns in columns names
-        Those patterns will be stripped out to normalise column names
-        '''
-        self.noise_patterns = [
-            r'^id_', r'^fk_', r'^pk_',  # Prefix
-            r'_id$', r'_fk$', r'_key$',  # Suffix
-            r'id$', r'fk$', r'key$'     # Suffix
-        ]
-        self.noise_regex = re.compile('|'.join(self.noise_patterns), re.IGNORECASE)
-
     def normalize_column_name(self, column_name: str) -> str:
         '''Normalise the column name by removing prefix/suffix patterns, underscores, hyphens and converting to lowercase'''
-        if not column_name:
-            return ""
-
-        name = column_name.strip().lower()
-
-        prev_name = ""
-        while name != prev_name:
-            prev_name = name
-            name = self.noise_regex.sub('', name)
-
-        name = name.replace('_', '').replace('-', '')
-
-        return name.strip()
+        return normalize_key_column_name(column_name)
 
     def compute_similarity(self, col1: str, col2: str) -> float:
         '''Calculate a similarity score between two column names using Levenshtein distance'''

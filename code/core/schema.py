@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from core.clickhouse_manager import CH_DB
 
 EXCLUDE_COL_TYPES_PREFIXES = ("Array", "Map", "Nested", "Tuple", "JSON", "Object")
+TYPE_WRAPPERS = ("Nullable", "LowCardinality")
+NUMERIC_TYPE_PREFIXES = ("Int", "UInt", "Float", "Decimal")
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,27 @@ class Col:
 def q_ident(x: str) -> str:
     """Wrap a ClickHouse identifier in backticks and escape any existing backticks."""
     return "`" + x.replace("`", "``") + "`"
+
+
+def normalize_clickhouse_type(ch_type: str) -> str:
+    """Remove common ClickHouse wrappers before comparing physical types."""
+    normalized = ch_type.strip()
+
+    changed = True
+    while changed:
+        changed = False
+        for wrapper in TYPE_WRAPPERS:
+            prefix = f"{wrapper}("
+            if normalized.startswith(prefix) and normalized.endswith(")"):
+                normalized = normalized[len(prefix) : -1].strip()
+                changed = True
+
+    return normalized
+
+
+def is_numeric_type(ch_type: str) -> bool:
+    """Return True when a ClickHouse physical type is numeric."""
+    return normalize_clickhouse_type(ch_type).startswith(NUMERIC_TYPE_PREFIXES)
 
 
 def list_tables(client, database: str = CH_DB) -> list[str]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.scoring import PK_WEIGHTS
+from core.schema import is_numeric_type as is_clickhouse_numeric_type
 
 
 @dataclass
@@ -141,9 +142,7 @@ class KeyRankingPolicy:
 
     @classmethod
     def is_numeric_type(cls, column_type: str) -> bool:
-        base_type = cls.normalize_type(column_type)
-
-        return base_type.startswith(("Int", "UInt", "Float", "Decimal"))
+        return is_clickhouse_numeric_type(column_type)
 
     @classmethod
     def is_measure_like_type(cls, column_type: str) -> bool:

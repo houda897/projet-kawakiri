@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
@@ -102,13 +102,17 @@ class PrimaryKeyEngine:
             ON p.database_name = i.database_name
            AND p.table_name = i.table_name
            AND p.column_name = i.column_name
-        WHERE p.uniqueness_ratio >= %(threshold)s
+        WHERE p.database_name = %(database)s
+          AND p.uniqueness_ratio >= %(threshold)s
           AND p.null_ratio <= 0.000001
           AND NOT startsWith(p.column_name, '__')
         ORDER BY p.table_name, p.column_name
         """
 
-        rows = self.db.query(sql, parameters={"threshold": threshold}).result_rows
+        rows = self.db.query(
+            sql,
+            parameters={"threshold": threshold, "database": CH_DB},
+        ).result_rows
 
         candidates = []
 
@@ -140,11 +144,15 @@ class PrimaryKeyEngine:
         sql = f"""
         SELECT DISTINCT table_name
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE NOT startsWith(column_name, '__')
+        WHERE database_name = %(database)s
+          AND NOT startsWith(column_name, '__')
         ORDER BY table_name
         """
 
-        all_tables = {row[0] for row in self.db.query(sql).result_rows}
+        all_tables = {
+            row[0]
+            for row in self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        }
         tables_with_pk = {candidate.table_name for candidate in candidates}
 
         return sorted(all_tables - tables_with_pk)
@@ -218,6 +226,47 @@ class PrimaryKeyEngine:
                 "reason",
             ],
         )
+
+    def load_candidates(self) -> list[PrimaryKeyCandidate]:
+        """
+        Load primary-key candidates already stored in metadata.
+        """
+
+        sql = f"""
+        SELECT
+            database_name,
+            table_name,
+            column_name,
+            column_type,
+            rows,
+            null_ratio,
+            uniqueness_ratio,
+            identifiability_score,
+            confidence,
+            reason
+        FROM {q_ident(META_DB)}.primary_key_candidates
+        WHERE database_name = %(database)s
+        ORDER BY table_name, confidence DESC, column_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+
+        return [
+            PrimaryKeyCandidate(
+                database_name=row[0],
+                table_name=row[1],
+                column_name=row[2],
+                column_type=row[3],
+                rows=row[4],
+                null_ratio=row[5],
+                uniqueness_ratio=row[6],
+                identifiability_score=row[7],
+                confidence=row[8],
+                reason=row[9],
+            )
+            for row in rows
+        ]
+
     @staticmethod
     def key_type(candidate: RankedKeyCandidate) -> str:
         """

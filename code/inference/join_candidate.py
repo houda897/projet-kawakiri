@@ -8,7 +8,7 @@ from config.scoring import EVALUATE_CANDIDATES
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import q_ident
+from core.schema import is_numeric_type, q_ident
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -175,12 +175,13 @@ class JoinEngine:
             column_name,
             column_type
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE null_ratio < 1
+        WHERE database_name = %(database)s
+          AND null_ratio < 1
           AND NOT startsWith(column_name, '__')
         ORDER BY table_name, column_name
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
 
         return [
             SourceColumn(
@@ -303,11 +304,12 @@ class JoinEngine:
             min_value,
             max_value
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE null_ratio < 1
+        WHERE database_name = %(database)s
+          AND null_ratio < 1
           AND NOT startsWith(column_name, '__')
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
 
         return {
             (row[0], row[1]): {
@@ -367,7 +369,7 @@ class JoinEngine:
             src_distinct = src_stat["distinct_count"]
             src_min = src_stat["min_value"]
             src_max = src_stat["max_value"]
-            is_numeric = self._is_numeric_type(src.column_type)
+            is_numeric = is_numeric_type(src.column_type)
 
             passes = False
 
@@ -498,14 +500,6 @@ class JoinEngine:
     @staticmethod
     def _has_range_values(*values: object) -> bool:
         return all(value is not None and value != "" for value in values)
-
-    def _is_numeric_type(self, col_type: str) -> bool:
-        """Return True if the ClickHouse type is numeric."""
-        cleaned = self._clean_type(col_type)
-        return any(
-            cleaned.startswith(type_name)
-            for type_name in ("Int", "UInt", "Float", "Decimal")
-        )
 
     @classmethod
     def should_skip_pair(

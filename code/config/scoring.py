@@ -31,3 +31,9 @@ EVALUATE_CANDIDATES = {
     "JOIN_SAMPLE_ROWS": 100000,
     # Calculation for margin -> 1.1 = tolerate 10% more than the pk
 }
+
+INGESTION_SETTINGS = {
+    # Keep CSV ingestion robust by default: temporal values stay as String unless
+    # this option is enabled for datasets with stable date/date-time formats.
+    "INFER_TEMPORAL_TYPES": False,
+}
