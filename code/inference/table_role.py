@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
+from core.meta import clear_metadata_table, load_confirmed_adjacency_edges
 from core.schema import q_ident
 
 logger = get_logger(__name__)
@@ -90,52 +91,139 @@ class TableRoleEngine:
 
         return sorted(results, key=lambda result: result.table_name)
 
+    def store_roles(self, roles: list[TableRoleCandidate]) -> None:
+        """
+        Store inferred table roles so downstream steps can consume stable metadata.
+        """
+
+        clear_metadata_table(self.db, "table_roles")
+
+        if not roles:
+            return
+
+        rows = [
+            [
+                CH_DB,
+                role.table_name,
+                role.row_count,
+                role.outgoing_edges,
+                role.incoming_edges,
+                role.numeric_columns,
+                role.text_columns,
+                role.date_columns,
+                role.has_primary_key,
+                role.role,
+                role.confidence,
+                role.reason,
+            ]
+            for role in roles
+        ]
+
+        self.db.insert(
+            f"{META_DB}.table_roles",
+            rows,
+            column_names=[
+                "database_name",
+                "table_name",
+                "row_count",
+                "outgoing_edges",
+                "incoming_edges",
+                "numeric_columns",
+                "text_columns",
+                "date_columns",
+                "has_primary_key",
+                "role",
+                "confidence",
+                "reason",
+            ],
+        )
+
+    def load_roles(self) -> list[TableRoleCandidate]:
+        """
+        Load stored table roles from metadata.
+        """
+
+        sql = f"""
+        SELECT
+            table_name,
+            row_count,
+            outgoing_edges,
+            incoming_edges,
+            numeric_columns,
+            text_columns,
+            date_columns,
+            has_primary_key,
+            role,
+            confidence,
+            reason
+        FROM {q_ident(META_DB)}.table_roles
+        WHERE database_name = %(database)s
+        ORDER BY table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+
+        return [
+            TableRoleCandidate(
+                table_name=row[0],
+                row_count=row[1],
+                outgoing_edges=row[2],
+                incoming_edges=row[3],
+                numeric_columns=row[4],
+                text_columns=row[5],
+                date_columns=row[6],
+                has_primary_key=row[7],
+                role=row[8],
+                confidence=row[9],
+                reason=row[10],
+            )
+            for row in rows
+        ]
+
     def load_table_row_counts(self) -> dict[str, int]:
         sql = f"""
         SELECT
             table_name,
             max(rows) AS row_count
         FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
         GROUP BY table_name
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
         return {row[0]: row[1] for row in rows}
 
     def load_primary_key_tables(self) -> set[str]:
         sql = f"""
         SELECT DISTINCT table_name
         FROM {q_ident(META_DB)}.primary_key_candidates
+        WHERE database_name = %(database)s
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
         return {row[0] for row in rows}
 
     def load_outgoing_edges(self) -> dict[str, int]:
-        sql = f"""
-        SELECT
-            source_table,
-            countDistinct(target_table) AS outgoing_edges
-        FROM {q_ident(META_DB)}.adjacency_edges
-        WHERE evidence = 'CONFIRMED'
-        GROUP BY source_table
-        """
+        targets_by_source: dict[str, set[str]] = {}
 
-        rows = self.db.query(sql).result_rows
-        return {row[0]: row[1] for row in rows}
+        for edge in load_confirmed_adjacency_edges(self.db):
+            targets_by_source.setdefault(edge.source_table, set()).add(edge.target_table)
+
+        return {
+            source_table: len(target_tables)
+            for source_table, target_tables in targets_by_source.items()
+        }
 
     def load_incoming_edges(self) -> dict[str, int]:
-        sql = f"""
-        SELECT
-            target_table,
-            countDistinct(source_table) AS incoming_edges
-        FROM {q_ident(META_DB)}.adjacency_edges
-        WHERE evidence = 'CONFIRMED'
-        GROUP BY target_table
-        """
+        sources_by_target: dict[str, set[str]] = {}
 
-        rows = self.db.query(sql).result_rows
-        return {row[0]: row[1] for row in rows}
+        for edge in load_confirmed_adjacency_edges(self.db):
+            sources_by_target.setdefault(edge.target_table, set()).add(edge.source_table)
+
+        return {
+            target_table: len(source_tables)
+            for target_table, source_tables in sources_by_target.items()
+        }
 
     def load_column_type_counts(self) -> dict[str, dict[str, int]]:
         sql = f"""
@@ -150,11 +238,12 @@ class TableRoleEngine:
             countIf(position(column_type, 'String') > 0) AS text_columns,
             countIf(position(column_type, 'Date') > 0) AS date_columns
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE NOT startsWith(column_name, '__')
+        WHERE database_name = %(database)s
+          AND NOT startsWith(column_name, '__')
         GROUP BY table_name
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
 
         return {
             row[0]: {

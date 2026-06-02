@@ -1,11 +1,15 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from inference.primary_key import PrimaryKeyCandidate
-from stats.functional_dependency import check_functional_dependency, validate_dependency 
+from stats.functional_dependency import check_functional_dependency, validate_dependency
+
 
 @pytest.fixture
 def mock_db():
     return MagicMock()
+
 
 def test_check_functional_dependency_single_column_valid(mock_db):
     '''Test that the function correctly identifies a valid functional dependency for a single column.'''
@@ -18,6 +22,8 @@ def test_check_functional_dependency_single_column_valid(mock_db):
     assert is_valid is True
     query_called = mock_db.query.call_args[0][0]
     assert "`CustomerID`" in query_called
+    assert "cityHash64" not in query_called
+
 
 def test_check_functional_dependency_composite_column_invalid(mock_db):
     '''Test with a composite key that is invalid (duplicates exist).'''
@@ -31,9 +37,10 @@ def test_check_functional_dependency_composite_column_invalid(mock_db):
     query_called = mock_db.query.call_args[0][0]
     assert "`OrderID`, `ProductID`" in query_called
 
-@patch("stats.functional_dependency.clickhouse_manager")
+
+@patch("stats.functional_dependency.get_manager")
 @patch("stats.functional_dependency.check_functional_dependency")
-def test_validate_dependency(mock_check_fd, mock_db_manager):
+def test_validate_dependency(mock_check_fd, mock_get_manager):
     '''Test that the function correctly filters valid and invalid candidates.'''
     
     candidate_valid = PrimaryKeyCandidate(
@@ -60,3 +67,4 @@ def test_validate_dependency(mock_check_fd, mock_db_manager):
     assert filtered_list[0].column_name == "ValidKey"
     
     assert len(candidates_list) == 2
+    mock_get_manager.assert_called_once()

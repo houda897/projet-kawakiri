@@ -1,4 +1,21 @@
-from inference.primary_key import PrimaryKeyCandidate
+from inference.primary_key import PrimaryKeyCandidate, PrimaryKeyEngine
+
+
+class FakeQueryResult:
+    def __init__(self, rows: list[tuple]):
+        self.result_rows = rows
+
+
+class FakeDb:
+    def __init__(self, rows: list[tuple]):
+        self.rows = rows
+        self.last_sql = ""
+        self.last_parameters = {}
+
+    def query(self, sql: str, parameters: dict | None = None) -> FakeQueryResult:
+        self.last_sql = sql
+        self.last_parameters = parameters or {}
+        return FakeQueryResult(self.rows)
 
 
 def test_primary_key_candidate_stores_all_fields() -> None:
@@ -43,3 +60,31 @@ def test_primary_key_candidate_with_low_confidence() -> None:
 
     assert candidate.table_name == "orders"
     assert candidate.confidence == 0.87
+
+
+def test_load_candidates_reads_stored_primary_keys() -> None:
+    db = FakeDb(
+        rows=[
+            (
+                "lab_db",
+                "customers",
+                "customer_id",
+                "Int64",
+                1000,
+                0.0,
+                1.0,
+                0.95,
+                0.98,
+                "stored_candidate",
+            )
+        ]
+    )
+    engine = PrimaryKeyEngine(db)  # type: ignore[arg-type]
+
+    candidates = engine.load_candidates()
+
+    assert len(candidates) == 1
+    assert candidates[0].table_name == "customers"
+    assert candidates[0].column_name == "customer_id"
+    assert "primary_key_candidates" in db.last_sql
+    assert db.last_parameters["database"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.schema import q_ident
 
 
@@ -46,6 +46,7 @@ class LowCardinalityAnalyzer:
         """
 
         parameters: dict[str, Any] = {
+            "database": CH_DB,
             "max_uniqueness_ratio": max_uniqueness_ratio,
             "min_rows": min_rows,
         }
@@ -66,7 +67,8 @@ class LowCardinalityAnalyzer:
             uniqueness_ratio,
             null_ratio
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE rows >= %(min_rows)s
+        WHERE database_name = %(database)s
+          AND rows >= %(min_rows)s
           AND uniqueness_ratio <= %(max_uniqueness_ratio)s
           AND null_ratio < 1
           AND NOT startsWith(column_name, '__')

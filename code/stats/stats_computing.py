@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
-from core.schema import Col, q_ident
+from core.schema import Col, is_numeric_type, q_ident
 
 
 def compute_column_stats(
@@ -112,11 +112,4 @@ def compute_column_stats(
             "column": col.name,
             "column_type": col.ch_type,
         },
-    )
-
-
-def is_numeric_type(ch_type: str) -> bool:
-    return any(
-        numeric_type in ch_type
-        for numeric_type in ("Int", "UInt", "Float", "Decimal")
     )

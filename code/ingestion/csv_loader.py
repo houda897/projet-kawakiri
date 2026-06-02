@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from config.scoring import INGESTION_SETTINGS
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
@@ -249,14 +250,15 @@ class CsvIngestionEngine:
         if not values:
             return "String"
 
+        if INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"]:
+            if all(self.is_datetime(value) for value in values):
+                return "DateTime"
+
+            if all(self.is_date(value) for value in values):
+                return "Date32"
+
         if all(self.is_int(value) for value in values):
             return "Int64"
-
-        if all(self.is_datetime(value) for value in values):
-            return "String"
-
-        if all(self.is_date(value) for value in values):
-            return "Date32"
 
         if all(self.is_float(value) for value in values):
             return "Float64"

@@ -2,8 +2,16 @@ from inference.adjacency import AdjacencyEdge, AdjacencyMatrixEngine
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
 
+class IdentitySemanticEngine:
+    def enrich_edges_with_semantics(
+        self,
+        edges: list[AdjacencyEdge],
+    ) -> list[AdjacencyEdge]:
+        return edges
+
+
 def test_build_edges_from_join_candidates() -> None:
-    engine = AdjacencyMatrixEngine(db=None)  # type: ignore
+    engine = AdjacencyMatrixEngine(db=None, semantic_engine=IdentitySemanticEngine())  # type: ignore[arg-type]
 
     joins = [
         JoinPrimaryKeyCandidate(
@@ -28,7 +36,7 @@ def test_build_edges_from_join_candidates() -> None:
 
 
 def test_build_matrix_keeps_max_score() -> None:
-    engine = AdjacencyMatrixEngine(db=None)  # type: ignore
+    engine = AdjacencyMatrixEngine(db=None, semantic_engine=IdentitySemanticEngine())  # type: ignore[arg-type]
 
     edges = [
         AdjacencyEdge("sales", "date_dim", ("created_at",), ("date",), 0.8, None, "CONFIRMED"),

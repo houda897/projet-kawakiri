@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.meta import load_confirmed_adjacency_edges, load_table_role_map
 from core.schema import q_ident
-from inference.table_role import TableRoleEngine
 from modeling.decision_model import (
     DecisionModelCandidate,
     DecisionModelEdge,
@@ -36,36 +36,26 @@ class DecisionModelCandidateBuilder:
         return candidates
 
     def load_table_roles(self) -> dict[str, str]:
-        role_engine = TableRoleEngine(self.db)
-        return {
-            result.table_name: result.role
-            for result in role_engine.infer_roles()
-        }
+        roles = load_table_role_map(self.db, CH_DB)
+
+        if not roles:
+            raise ValueError(
+                "No table roles found. Run infer-table-roles before build-model-candidates."
+            )
+
+        return roles
 
     def load_confirmed_edges(self) -> list[DecisionModelEdge]:
-        sql = f"""
-        SELECT
-            source_table,
-            target_table,
-            source_columns,
-            target_columns,
-            join_success_ratio
-        FROM {q_ident(META_DB)}.adjacency_edges
-        WHERE evidence = 'CONFIRMED'
-        """
-
-        rows = self.db.query(sql).result_rows
-
         return [
             DecisionModelEdge(
-                source_table=row[0],
-                target_table=row[1],
-                source_columns=self.split_columns(row[2]),
-                target_columns=self.split_columns(row[3]),
-                join_success_ratio=row[4],
+                source_table=edge.source_table,
+                target_table=edge.target_table,
+                source_columns=self.split_columns(edge.source_columns),
+                target_columns=self.split_columns(edge.target_columns),
+                join_success_ratio=edge.join_success_ratio,
                 depth=1,
             )
-            for row in rows
+            for edge in load_confirmed_adjacency_edges(self.db)
         ]
 
     def load_column_counts(self) -> dict[str, dict[str, int]]:
@@ -80,11 +70,12 @@ class DecisionModelCandidateBuilder:
                 OR positionCaseInsensitive(column_type, 'Decimal') > 0
             ) AS numeric_attribute_count
         FROM {q_ident(META_DB)}.column_profiles
-        WHERE NOT startsWith(column_name, '__')
+        WHERE database_name = %(database)s
+          AND NOT startsWith(column_name, '__')
         GROUP BY table_name
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
 
         return {
             row[0]: {

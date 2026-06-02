@@ -1,5 +1,16 @@
+from dataclasses import dataclass
+
 from core.clickhouse_manager import META_DB
 from core.schema import q_ident
+
+
+@dataclass(frozen=True)
+class StoredAdjacencyEdge:
+    source_table: str
+    target_table: str
+    source_columns: str
+    target_columns: str
+    join_success_ratio: float
 
 
 def ensure_meta_schema(client) -> None:
@@ -178,6 +189,27 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (source_table, target_table, source_column, target_column, created_at)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.table_roles
+    (
+        database_name String,
+        table_name String,
+        row_count UInt64,
+        outgoing_edges UInt64,
+        incoming_edges UInt64,
+        numeric_columns UInt64,
+        text_columns UInt64,
+        date_columns UInt64,
+        has_primary_key Bool,
+        role String,
+        confidence Float64,
+        reason String,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, table_name, created_at)
+    """)
+
 
 
 COMPUTED_METADATA_TABLES = (
@@ -186,7 +218,8 @@ COMPUTED_METADATA_TABLES = (
     "identifiability_scores",
     "primary_key_candidates",
     "join_candidates",
-    "adjacency_edges"
+    "adjacency_edges",
+    "table_roles",
     
 )
 
@@ -208,3 +241,50 @@ def clear_metadata_table(db, table_name: str) -> None:
 
     db.command(f"TRUNCATE TABLE IF EXISTS {q_ident(META_DB)}.{q_ident(table_name)}")
 
+
+def load_table_role_map(db, database: str) -> dict[str, str]:
+    """
+    Load stored table roles as a table_name -> role mapping.
+    """
+
+    sql = f"""
+    SELECT
+        table_name,
+        role
+    FROM {q_ident(META_DB)}.table_roles
+    WHERE database_name = %(database)s
+    ORDER BY table_name
+    """
+
+    rows = db.query(sql, parameters={"database": database}).result_rows
+    return {row[0]: row[1] for row in rows}
+
+
+def load_confirmed_adjacency_edges(db) -> list[StoredAdjacencyEdge]:
+    """
+    Load confirmed adjacency edges from metadata.
+    """
+
+    sql = f"""
+    SELECT
+        source_table,
+        target_table,
+        source_columns,
+        target_columns,
+        join_success_ratio
+    FROM {q_ident(META_DB)}.adjacency_edges
+    WHERE evidence = 'CONFIRMED'
+    """
+
+    rows = db.query(sql).result_rows
+
+    return [
+        StoredAdjacencyEdge(
+            source_table=row[0],
+            target_table=row[1],
+            source_columns=row[2],
+            target_columns=row[3],
+            join_success_ratio=row[4],
+        )
+        for row in rows
+    ]
