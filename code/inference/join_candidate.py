@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
+from core.meta import clear_metadata_table
 from core.schema import q_ident
 
 from inference.primary_key import PrimaryKeyCandidate
@@ -409,6 +410,8 @@ class JoinEngine:
         """
         Store inferred join candidates in metadata.
         """
+
+        clear_metadata_table(self.db, "join_candidates")
 
         if not candidates:
             return

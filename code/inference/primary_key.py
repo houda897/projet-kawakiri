@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
+from core.meta import clear_metadata_table
 from core.schema import q_ident
 
 from inference.composite_key import CompositeKeyEngine
@@ -179,6 +180,8 @@ class PrimaryKeyEngine:
         """
         Persist primary-key candidates into the metadata table.
         """
+
+        clear_metadata_table(self.db, "primary_key_candidates")
 
         if not candidates:
             return

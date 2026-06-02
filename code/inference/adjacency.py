@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
+from core.meta import clear_metadata_table
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -94,6 +95,8 @@ class AdjacencyMatrixEngine:
         """
         Store adjacency edges in the metadata database.
         """
+
+        clear_metadata_table(self.db, "adjacency_edges")
 
         if not edges:
             return
@@ -205,4 +208,3 @@ class AdjacencyMatrixEngine:
             tgt = f"{edge.target_table}.{edge.target_columns[0]}"
 
             logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {edge.evidence}")
-
