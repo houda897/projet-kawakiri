@@ -198,6 +198,7 @@ class JoinEngine:
             "COMPOSITE_KEY_COLUMN_RESTRICTION",
             3,
         ),
+        limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
     ) -> list[JoinPrimaryKeyCandidate]:
         """
@@ -279,6 +280,7 @@ class JoinEngine:
                         source_table=table_name,
                         source_column=combo_str,
                         primary_key=primary_key,
+                        limit_rows=limit_rows,
                     )
 
                     if result.join_success_ratio >= min_success_ratio:

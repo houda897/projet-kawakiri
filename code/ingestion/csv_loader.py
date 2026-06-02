@@ -148,17 +148,28 @@ class CsvIngestionEngine:
             raise NotADirectoryError(f"Expected a folder, got: {folder}")
 
         results = []
+        first_import_by_table: set[str] = set()
 
-        for csv_file in sorted(folder.glob("*.csv")):
+        for csv_file in sorted(folder.rglob("*.csv")):
+            relative_path = csv_file.relative_to(folder)
+            table_source_name = (
+                relative_path.parts[0]
+                if len(relative_path.parts) > 1
+                else csv_file.stem
+            )
+            table_name = self.clean_identifier(table_source_name)
+            import_mode = if_exists if table_name not in first_import_by_table else "append"
+
             results.append(
                 self.import_csv_to_clickhouse(
                     csv_path=csv_file,
-                    table_name=None,
+                    table_name=table_name,
                     database=database,
                     sample_size=sample_size,
-                    if_exists=if_exists,
+                    if_exists=import_mode,
                 )
             )
+            first_import_by_table.add(table_name)
 
         return results
 
