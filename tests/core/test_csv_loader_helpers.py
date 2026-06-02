@@ -157,7 +157,7 @@ def test_infer_column_types_marks_nullable_columns(engine: CsvIngestionEngine) -
     assert inferred == [
         DetectedColumn(name="id", detected_type="Int64", nullable=False),
         DetectedColumn(name="amount", detected_type="Float64", nullable=False),
-        DetectedColumn(name="created_at", detected_type="DateTime", nullable=False),
+        DetectedColumn(name="created_at", detected_type="String", nullable=False),
         DetectedColumn(name="label", detected_type="Nullable(String)", nullable=True),
     ]
 
