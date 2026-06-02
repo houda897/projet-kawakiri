@@ -201,3 +201,10 @@ def clear_computed_metadata(db) -> None:
         db.command(f"TRUNCATE TABLE IF EXISTS {q_ident(META_DB)}.{q_ident(table)}")
 
 
+def clear_metadata_table(db, table_name: str) -> None:
+    """
+    Clear one metadata table that is recomputed by a pipeline step.
+    """
+
+    db.command(f"TRUNCATE TABLE IF EXISTS {q_ident(META_DB)}.{q_ident(table_name)}")
+
