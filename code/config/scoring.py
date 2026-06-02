@@ -27,6 +27,7 @@ SEMANTIC_WEIGHTS = {
 
 EVALUATE_CANDIDATES = {
     "COMPOSITE_KEY_COLUMN_RESTRICTION" : 5,
-    "Filter_margin" : 1.1
+    "Filter_margin" : 1.1,
+    "JOIN_SAMPLE_ROWS": 100000,
     # Calculation for margin -> 1.1 = tolerate 10% more than the pk
 }

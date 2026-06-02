@@ -117,7 +117,7 @@ class TableRoleEngine:
             source_table,
             countDistinct(target_table) AS outgoing_edges
         FROM {q_ident(META_DB)}.adjacency_edges
-        WHERE evidence IN ('CONFIRMED', 'SEMANTIC_CONFIRMED')
+        WHERE evidence = 'CONFIRMED'
         GROUP BY source_table
         """
 
@@ -130,7 +130,7 @@ class TableRoleEngine:
             target_table,
             countDistinct(source_table) AS incoming_edges
         FROM {q_ident(META_DB)}.adjacency_edges
-        WHERE evidence IN ('CONFIRMED', 'SEMANTIC_CONFIRMED')
+        WHERE evidence = 'CONFIRMED'
         GROUP BY target_table
         """
 

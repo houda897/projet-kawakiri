@@ -50,8 +50,8 @@ class AdjacencyMatrixEngine:
                 AdjacencyEdge(
                     source_table=candidate.source_table,
                     target_table=candidate.target_table,
-                    source_columns=(candidate.source_column,),
-                    target_columns=(candidate.target_column,),
+                    source_columns=self.split_columns(candidate.source_column),
+                    target_columns=self.split_columns(candidate.target_column),
                     join_success_ratio=candidate.join_success_ratio,
                     hybrid_score=None,
                     evidence="physical_join_coverage",
@@ -64,6 +64,14 @@ class AdjacencyMatrixEngine:
         enriched_edges = sem_engine.enrich_edges_with_semantics(edges)
 
         return enriched_edges
+
+    @staticmethod
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(
+            column.strip()
+            for column in columns.split(",")
+            if column.strip()
+        )
 
     def build_matrix(
         self,
@@ -85,7 +93,7 @@ class AdjacencyMatrixEngine:
             current_score = matrix[edge.source_table].get(edge.target_table, 0.0)
             matrix[edge.source_table][edge.target_table] = max(
                 current_score,
-                edge.join_success_ratio,
+                edge.hybrid_score or edge.join_success_ratio,
             )
 
         return matrix
