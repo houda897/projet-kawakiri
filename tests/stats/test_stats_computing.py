@@ -24,6 +24,8 @@ def test_ensure_meta_schema_cree_la_table_column_stats() -> None:
     all_sql = " ".join(str(call) for call in db.command.call_args_list)
     assert "column_stats" in all_sql
     assert "entropy_ratio" in all_sql
+    assert "decision_model_candidates" in all_sql
+    assert "decision_model_edges" in all_sql
 
 
 def test_compute_column_stats_numeric_column_contains_numeric_metrics() -> None:

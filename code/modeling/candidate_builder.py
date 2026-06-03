@@ -4,7 +4,11 @@ from collections import defaultdict
 
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
-from core.meta import load_confirmed_adjacency_edges, load_table_role_map
+from core.meta import (
+    clear_metadata_table,
+    load_confirmed_adjacency_edges,
+    load_table_role_map,
+)
 from core.schema import q_ident
 from modeling.decision_model import (
     DecisionModelCandidate,
@@ -34,6 +38,150 @@ class DecisionModelCandidateBuilder:
         candidates.extend(self.build_constellation_candidates(roles, edges, column_counts))
 
         return candidates
+
+    def store_candidates(self, candidates: list[DecisionModelCandidate]) -> None:
+        """
+        Store decision-model candidates and their edges in metadata.
+        """
+
+        clear_metadata_table(self.db, "decision_model_edges")
+        clear_metadata_table(self.db, "decision_model_candidates")
+
+        if not candidates:
+            return
+
+        candidate_rows = [
+            [
+                CH_DB,
+                candidate.model_id,
+                candidate.model_type.value,
+                ",".join(candidate.fact_tables),
+                ",".join(candidate.dimension_tables),
+                candidate.table_count,
+                candidate.join_count,
+                candidate.attribute_count,
+                candidate.numeric_attribute_count,
+            ]
+            for candidate in candidates
+        ]
+
+        edge_rows = [
+            [
+                CH_DB,
+                candidate.model_id,
+                edge.source_table,
+                edge.target_table,
+                ",".join(edge.source_columns),
+                ",".join(edge.target_columns),
+                edge.join_success_ratio,
+                edge.depth,
+            ]
+            for candidate in candidates
+            for edge in candidate.edges
+        ]
+
+        self.db.insert(
+            f"{META_DB}.decision_model_candidates",
+            candidate_rows,
+            column_names=[
+                "database_name",
+                "model_id",
+                "model_type",
+                "fact_tables",
+                "dimension_tables",
+                "table_count",
+                "join_count",
+                "attribute_count",
+                "numeric_attribute_count",
+            ],
+        )
+
+        if edge_rows:
+            self.db.insert(
+                f"{META_DB}.decision_model_edges",
+                edge_rows,
+                column_names=[
+                    "database_name",
+                    "model_id",
+                    "source_table",
+                    "target_table",
+                    "source_columns",
+                    "target_columns",
+                    "join_success_ratio",
+                    "depth",
+                ],
+            )
+
+    def load_candidates(self) -> list[DecisionModelCandidate]:
+        """
+        Load stored decision-model candidates from metadata.
+        """
+
+        candidate_sql = f"""
+        SELECT
+            model_id,
+            model_type,
+            fact_tables,
+            dimension_tables,
+            table_count,
+            join_count,
+            attribute_count,
+            numeric_attribute_count
+        FROM {q_ident(META_DB)}.decision_model_candidates
+        WHERE database_name = %(database)s
+        ORDER BY model_type, model_id
+        """
+
+        edge_sql = f"""
+        SELECT
+            model_id,
+            source_table,
+            target_table,
+            source_columns,
+            target_columns,
+            join_success_ratio,
+            depth
+        FROM {q_ident(META_DB)}.decision_model_edges
+        WHERE database_name = %(database)s
+        ORDER BY model_id, depth, source_table, target_table
+        """
+
+        candidate_rows = self.db.query(
+            candidate_sql,
+            parameters={"database": CH_DB},
+        ).result_rows
+        edge_rows = self.db.query(
+            edge_sql,
+            parameters={"database": CH_DB},
+        ).result_rows
+
+        edges_by_model: dict[str, list[DecisionModelEdge]] = defaultdict(list)
+
+        for row in edge_rows:
+            edges_by_model[row[0]].append(
+                DecisionModelEdge(
+                    source_table=row[1],
+                    target_table=row[2],
+                    source_columns=self.split_columns(row[3]),
+                    target_columns=self.split_columns(row[4]),
+                    join_success_ratio=row[5],
+                    depth=row[6],
+                )
+            )
+
+        return [
+            DecisionModelCandidate(
+                model_type=DecisionModelType(row[1]),
+                fact_tables=self.split_columns(row[2]),
+                dimension_tables=self.split_columns(row[3]),
+                edges=tuple(edges_by_model.get(row[0], [])),
+                table_count=row[4],
+                join_count=row[5],
+                attribute_count=row[6],
+                numeric_attribute_count=row[7],
+            )
+            for row in candidate_rows
+        ]
 
     def load_table_roles(self) -> dict[str, str]:
         roles = load_table_role_map(self.db, CH_DB)

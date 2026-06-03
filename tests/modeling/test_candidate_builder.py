@@ -147,3 +147,90 @@ def test_load_table_roles_requires_stored_roles() -> None:
         assert "Run infer-table-roles" in str(exc)
     else:
         raise AssertionError("Expected ValueError when stored table roles are missing")
+
+
+def test_store_candidates_persists_models_and_edges() -> None:
+    db = MagicMock()
+    builder = DecisionModelCandidateBuilder(db)
+    candidate = builder.to_candidate(
+        model_type=DecisionModelType.STAR,
+        fact_tables=("sales",),
+        dimension_tables=("customers",),
+        edges=(edge("sales", "customers", "customer_id", "customer_id"),),
+        column_counts={
+            "sales": {"attribute_count": 5, "numeric_attribute_count": 3},
+            "customers": {"attribute_count": 4, "numeric_attribute_count": 1},
+        },
+    )
+
+    builder.store_candidates([candidate])
+
+    assert db.command.call_count == 2
+    assert db.insert.call_count == 2
+    assert db.insert.call_args_list[0][0][0].endswith(".decision_model_candidates")
+    assert db.insert.call_args_list[1][0][0].endswith(".decision_model_edges")
+
+
+def test_store_candidates_clears_metadata_when_empty() -> None:
+    db = MagicMock()
+    builder = DecisionModelCandidateBuilder(db)
+
+    builder.store_candidates([])
+
+    assert db.command.call_count == 2
+    db.insert.assert_not_called()
+
+
+def test_load_candidates_reconstructs_models_and_edges() -> None:
+    db = MagicMock()
+    db.query.side_effect = [
+        SimpleNamespace(
+            result_rows=[
+                (
+                    "star_sales",
+                    "STAR",
+                    "sales",
+                    "customers,products",
+                    3,
+                    2,
+                    15,
+                    6,
+                )
+            ]
+        ),
+        SimpleNamespace(
+            result_rows=[
+                (
+                    "star_sales",
+                    "sales",
+                    "customers",
+                    "customer_id",
+                    "customer_id",
+                    1.0,
+                    1,
+                ),
+                (
+                    "star_sales",
+                    "sales",
+                    "products",
+                    "product_id",
+                    "product_id",
+                    0.98,
+                    1,
+                ),
+            ]
+        ),
+    ]
+    builder = DecisionModelCandidateBuilder(db)
+
+    candidates = builder.load_candidates()
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.model_type == DecisionModelType.STAR
+    assert candidate.fact_tables == ("sales",)
+    assert candidate.dimension_tables == ("customers", "products")
+    assert candidate.table_count == 3
+    assert candidate.join_count == 2
+    assert len(candidate.edges) == 2
+    assert candidate.edges[0].source_columns == ("customer_id",)
