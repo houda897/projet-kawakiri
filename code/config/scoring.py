@@ -37,3 +37,17 @@ INGESTION_SETTINGS = {
     # this option is enabled for datasets with stable date/date-time formats.
     "INFER_TEMPORAL_TYPES": False,
 }
+
+PARSIMONY_WEIGHTS = {
+    # Complexity penalties
+    "table_penalty": -1.0,           # Penalty per table in the model
+    "attribute_penalty": -0.05,      # Penalty for each column to discourage monster tables
+    
+    # Reward for numeric attribute 
+    "numeric_reward": 2.0,           # Reward for numeric attribute in facts tables
+    "dimension_reward": 8.0,         # Reward for each connected dimension tables
+    
+    # Bonus for galaxy schema
+    "fact_coverage_bonus": 15.0,     # Reward if the model unify multple fact tables
+    "shared_dimension_bonus": 10.0   # Reward for shared dimension between multiples fact tables
+}

@@ -245,7 +245,17 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, model_id, source_table, target_table, created_at)
     """)
 
-
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_scores
+    (
+        database_name String,
+        model_id String,
+        parsimony_score Float64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id)
+    """)
 
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
@@ -257,6 +267,7 @@ COMPUTED_METADATA_TABLES = (
     "table_roles",
     "decision_model_candidates",
     "decision_model_edges",
+    "decision_model_scores",
     
 )
 
