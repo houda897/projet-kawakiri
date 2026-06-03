@@ -210,6 +210,41 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, table_name, created_at)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_candidates
+    (
+        database_name String,
+        model_id String,
+        model_type String,
+        fact_tables String,
+        dimension_tables String,
+        table_count UInt64,
+        join_count UInt64,
+        attribute_count UInt64,
+        numeric_attribute_count UInt64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_type, model_id, created_at)
+    """)
+
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_edges
+    (
+        database_name String,
+        model_id String,
+        source_table String,
+        target_table String,
+        source_columns String,
+        target_columns String,
+        join_success_ratio Float64,
+        depth UInt64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, source_table, target_table, created_at)
+    """)
+
 
 
 COMPUTED_METADATA_TABLES = (
@@ -220,6 +255,8 @@ COMPUTED_METADATA_TABLES = (
     "join_candidates",
     "adjacency_edges",
     "table_roles",
+    "decision_model_candidates",
+    "decision_model_edges",
     
 )
 

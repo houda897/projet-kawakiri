@@ -146,8 +146,10 @@ def run_sql_view_generation() -> None:
 
 def run_model_candidate_building() -> None:
     db = get_manager()
+    ensure_meta_schema(db)
     builder = DecisionModelCandidateBuilder(db)
     candidates = builder.build_candidates()
+    builder.store_candidates(candidates)
     builder.print_candidates(candidates)
 
 
