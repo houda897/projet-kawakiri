@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from config.scoring import PK_WEIGHTS
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.schema import q_ident
 from stats.functional_dependency import check_functional_dependency
@@ -149,12 +149,13 @@ class CompositeKeyEngine:
             ON p.database_name = i.database_name
            AND p.table_name = i.table_name
            AND p.column_name = i.column_name
-        WHERE p.null_ratio <= 0.000001
+        WHERE p.database_name = %(database)s
+          AND p.null_ratio <= 0.000001
           AND NOT startsWith(p.column_name, '__')
         ORDER BY p.table_name, p.column_name
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
         columns = []
 
         for row in rows:

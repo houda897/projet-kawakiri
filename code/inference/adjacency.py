@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
@@ -8,6 +9,14 @@ from core.meta import clear_metadata_table
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
 logger = get_logger(__name__)
+
+
+class SemanticEdgeEnricher(Protocol):
+    def enrich_edges_with_semantics(
+        self,
+        edges: list["AdjacencyEdge"],
+    ) -> list["AdjacencyEdge"]:
+        ...
 
 
 @dataclass
@@ -33,8 +42,9 @@ class AdjacencyMatrixEngine:
     Build a table-level adjacency matrix from physical join evidence.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: clickhouse_manager, semantic_engine: SemanticEdgeEnricher):
         self.db = db
+        self.semantic_engine = semantic_engine
 
     def build_edges_from_join_candidates(
         self,
@@ -59,12 +69,7 @@ class AdjacencyMatrixEngine:
                 )
             )
 
-        from semantic.semantic_engine import SemanticEngine
-
-        sem_engine = SemanticEngine()
-        enriched_edges = sem_engine.enrich_edges_with_semantics(edges)
-
-        return enriched_edges
+        return self.semantic_engine.enrich_edges_with_semantics(edges)
 
     @staticmethod
     def split_columns(columns: str) -> tuple[str, ...]:

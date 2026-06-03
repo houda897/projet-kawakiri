@@ -32,6 +32,12 @@ EVALUATE_CANDIDATES = {
     # Calculation for margin -> 1.1 = tolerate 10% more than the pk
 }
 
+INGESTION_SETTINGS = {
+    # Keep CSV ingestion robust by default: temporal values stay as String unless
+    # this option is enabled for datasets with stable date/date-time formats.
+    "INFER_TEMPORAL_TYPES": False,
+}
+
 PARSIMONY_WEIGHTS = {
     # --- Pénalités de complexité physique (allégées) ---
     "table_penalty": -1.0,           # Pénalité par table globale dans le modèle

@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 from modeling.candidate_builder import DecisionModelCandidateBuilder
 from modeling.decision_model import DecisionModelEdge, DecisionModelType
 
@@ -111,3 +114,36 @@ def test_build_constellation_keeps_all_dimensions_of_related_facts() -> None:
     assert candidate.fact_tables == ("returns", "sales")
     assert candidate.dimension_tables == ("customers", "date_dim", "products")
     assert candidate.join_count == 5
+
+
+def test_load_table_roles_reads_stored_metadata() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(
+        result_rows=[
+            ("sales", "FACT"),
+            ("customers", "DIMENSION"),
+        ]
+    )
+    builder = DecisionModelCandidateBuilder(db)
+
+    roles = builder.load_table_roles()
+
+    assert roles == {
+        "sales": "FACT",
+        "customers": "DIMENSION",
+    }
+    sql = db.query.call_args[0][0]
+    assert "table_roles" in sql
+
+
+def test_load_table_roles_requires_stored_roles() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(result_rows=[])
+    builder = DecisionModelCandidateBuilder(db)
+
+    try:
+        builder.load_table_roles()
+    except ValueError as exc:
+        assert "Run infer-table-roles" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when stored table roles are missing")

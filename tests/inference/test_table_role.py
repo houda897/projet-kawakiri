@@ -1,4 +1,8 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 from inference.table_role import TableRoleEngine
+from inference.table_role import TableRoleCandidate
 
 
 def test_classify_table_as_fact() -> None:
@@ -89,3 +93,58 @@ def test_classify_linked_descriptive_table_as_dimension() -> None:
     assert role == "DIMENSION"
     assert confidence == 0.75
     assert "mostly_descriptive_columns" in reason
+
+
+def test_store_roles_persists_inferred_roles() -> None:
+    db = MagicMock()
+    engine = TableRoleEngine(db)
+    roles = [
+        TableRoleCandidate(
+            table_name="sales",
+            row_count=100,
+            outgoing_edges=2,
+            incoming_edges=0,
+            numeric_columns=4,
+            text_columns=1,
+            date_columns=0,
+            has_primary_key=True,
+            role="FACT",
+            confidence=0.85,
+            reason="table_has_many_links_and_mostly_numeric_columns",
+        )
+    ]
+
+    engine.store_roles(roles)
+
+    db.command.assert_called_once()
+    db.insert.assert_called_once()
+    assert db.insert.call_args[0][0].endswith(".table_roles")
+
+
+def test_load_roles_reads_stored_roles() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(
+        result_rows=[
+            (
+                "sales",
+                100,
+                2,
+                0,
+                4,
+                1,
+                0,
+                True,
+                "FACT",
+                0.85,
+                "table_has_many_links_and_mostly_numeric_columns",
+            )
+        ]
+    )
+    engine = TableRoleEngine(db)
+
+    roles = engine.load_roles()
+
+    assert len(roles) == 1
+    assert roles[0].table_name == "sales"
+    assert roles[0].role == "FACT"
+    assert roles[0].confidence == 0.85
