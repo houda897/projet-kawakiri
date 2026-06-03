@@ -3,7 +3,6 @@ from inference.adjacency import AdjacencyMatrixEngine
 from semantic.semantic_engine import *
 from colorama import Fore, Style, init
 from datetime import datetime
-from modeling.model_ranking import rank_models_by_parsimony
 
 init()
 
@@ -74,10 +73,3 @@ time7 = datetime.now()
 segment_time = time7 - time6
 absolute_time = time7 - time0
 print(Fore.RED + f'--- *** --- model_candidate_building --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
-
-print('\n' + '=' * 80 + '\n')
-
-print(Fore.GREEN + '--- *** --- model_ranking --- *** ---' + Style.RESET_ALL)
-ranked_candidates = rank_models_by_parsimony(candidates)
-for score, candidate in ranked_candidates:
-    print(f"Score: {score} | Type: {candidate.model_type.value} | Tables: {candidate.table_count} | Attributes: {candidate.attribute_count} | Numeric Attributes: {candidate.numeric_attribute_count} | Dimension Tables: {len(candidate.dimension_tables)} | Fact Tables: {len(candidate.fact_tables)}")
