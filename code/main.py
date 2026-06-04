@@ -13,6 +13,7 @@ from modeling.candidate_builder import DecisionModelCandidateBuilder
 from profiling.basic_profile import ProfileEngine
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from validation.structural_validator import StructuralValidator
 from modeling.model_ranking import ModelRanking
 from colorama import Fore,Style,init
 
@@ -164,11 +165,14 @@ def run_model_candidate_building() -> None:
     builder.store_candidates(candidates)
     builder.print_candidates(candidates)
 
-    raw_candidates = builder.load_candidates()
-    ranking_engine = ModelRanking(db)
 
-    ranked_candidates = ranking_engine.rank_and_store(raw_candidates)
-    ranking_engine.print_ranked_models(ranked_candidates)
+def run_structural_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    validator = StructuralValidator(db)
+    results = validator.validate_stored_candidates()
+    validator.store_results(results)
+    validator.print_results(results)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -259,6 +263,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     model_candidates_parser.set_defaults(
         handler=lambda args: run_model_candidate_building()
+    )
+
+    structural_validation_parser = subparsers.add_parser(
+        "validate-structure",
+        help="Validate stored decision model candidates with structural rules",
+    )
+    structural_validation_parser.set_defaults(
+        handler=lambda args: run_structural_validation()
     )
 
     return parser

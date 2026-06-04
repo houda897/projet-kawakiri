@@ -257,6 +257,37 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, model_id)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validations
+    (
+        database_name String,
+        model_id String,
+        is_valid Bool,
+        issue_count UInt64,
+        orphan_count UInt64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, created_at)
+    """)
+
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validation_issues
+    (
+        database_name String,
+        model_id String,
+        rule_name String,
+        severity String,
+        message String,
+        source_table String,
+        target_table String,
+        orphan_count UInt64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, rule_name, created_at)
+    """)
+
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
     "column_stats",
@@ -268,7 +299,8 @@ COMPUTED_METADATA_TABLES = (
     "decision_model_candidates",
     "decision_model_edges",
     "decision_model_scores",
-    
+    "decision_model_validations",
+    "decision_model_validation_issues",
 )
 
 def clear_computed_metadata(db) -> None:

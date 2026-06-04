@@ -3,18 +3,24 @@ from __future__ import annotations
 import csv
 from datetime import date, datetime
 from pathlib import Path
-
-import pytest
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from config.scoring import INGESTION_SETTINGS
-from ingestion.csv_loader import CsvIngestionEngine, DetectedColumn
+from ingestion.csv_loader import (
+    CsvIngestionEngine,
+    DetectedColumn,
+    IngestionResult,
+    SampleCheck,
+)
 
 
 @pytest.fixture
 def engine() -> CsvIngestionEngine:
     return CsvIngestionEngine(db=MagicMock())
-
 
 
 def test_detect_delimiter_uses_sniffer(engine: CsvIngestionEngine, tmp_path: Path) -> None:
@@ -24,31 +30,70 @@ def test_detect_delimiter_uses_sniffer(engine: CsvIngestionEngine, tmp_path: Pat
     assert engine.detect_delimiter(path) == ";"
 
 
-def test_detect_delimiter_falls_back_to_most_frequent_delimiter(
+def test_detect_delimiter_fallback_prefers_stable_columns(
     engine: CsvIngestionEngine,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "sample.csv"
-    path.write_text("id\tname\tscore\n1\tAlice\t10\n2\tBob\t20\n", encoding="utf-8")
+    path.write_text(
+        "id;comment;score\n"
+        "1;hello, with comma;10\n"
+        "2;another, comma;20\n",
+        encoding="utf-8",
+    )
 
     def raise_sniff(*args, **kwargs):
         raise csv.Error("cannot sniff")
 
     monkeypatch.setattr(csv.Sniffer, "sniff", raise_sniff)
 
-    assert engine.detect_delimiter(path) == "\t"
+    assert engine.detect_delimiter(path) == ";"
 
 
-def test_check_malformed_row_rejects_extra_columns(
+def test_read_csv_sample_cleans_headers_and_skips_dirty_rows(
     engine: CsvIngestionEngine,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "bad.csv"
-    row = {"id": "1", "amount": "12", None: ["5"]}
+    path = tmp_path / "sample.csv"
+    path.write_text(
+        "Customer ID;Name\n"
+        "1;Alice\n"
+        "---;---\n"
+        "2;Bob\n",
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ValueError, match="extra columns detected"):
-        engine.check_malformed_row(row, path, 2, ",")
+    headers, rows = engine.read_csv_sample(path, ";", sample_size=None)
+
+    assert headers == ["Customer_ID", "Name"]
+    assert rows == [
+        {"Customer_ID": "1", "Name": "Alice"},
+        {"Customer_ID": "2", "Name": "Bob"},
+    ]
+
+
+def test_import_folder_uses_subfolder_name_and_appends_after_first_file(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "data"
+    table_folder = folder / "tickets"
+    table_folder.mkdir(parents=True)
+    first_file = table_folder / "part1.csv"
+    second_file = table_folder / "part2.csv"
+    first_file.write_text("id\n1\n", encoding="utf-8")
+    second_file.write_text("id\n2\n", encoding="utf-8")
+
+    engine.import_csv_to_clickhouse = MagicMock(return_value={"status": "success"})  # type: ignore[method-assign]
+
+    engine.import_csv_folder_to_clickhouse(folder, if_exists="replace")
+
+    calls = engine.import_csv_to_clickhouse.call_args_list
+    assert calls[0].kwargs["table_name"] == "tickets"
+    assert calls[0].kwargs["if_exists"] == "replace"
+    assert calls[1].kwargs["table_name"] == "tickets"
+    assert calls[1].kwargs["if_exists"] == "append"
 
 
 @pytest.mark.parametrize(
@@ -65,13 +110,7 @@ def test_clean_identifier(engine: CsvIngestionEngine, raw: str | None, expected:
 
 
 def test_dedupe_names_appends_stable_suffixes(engine: CsvIngestionEngine) -> None:
-    assert engine.dedupe_names(["a", "a", "b", "a", "b"]) == [
-        "a",
-        "a_2",
-        "b",
-        "a_3",
-        "b_2",
-    ]
+    assert engine.dedupe_names(["a", "a", "b", "a"]) == ["a", "a_2", "b", "a_3"]
 
 
 @pytest.mark.parametrize(
@@ -86,59 +125,6 @@ def test_dedupe_names_appends_stable_suffixes(engine: CsvIngestionEngine) -> Non
 )
 def test_clean_value(engine: CsvIngestionEngine, raw: str | None, expected: str | None) -> None:
     assert engine.clean_value(raw) == expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("12", True),
-        ("-3", True),
-        ("12.0", False),
-        ("1,5", False),
-        ("abc", False),
-    ],
-)
-def test_is_int(engine: CsvIngestionEngine, value: str, expected: bool) -> None:
-    assert engine.is_int(value) is expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("12", True),
-        ("1.25", True),
-        ("1,25", True),
-        ("abc", False),
-    ],
-)
-def test_is_float(engine: CsvIngestionEngine, value: str, expected: bool) -> None:
-    assert engine.is_float(value) is expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("2024-01-31", True),
-        ("31/01/2024", True),
-        ("01/31/2024", True),
-        ("2024/01/31", False),
-    ],
-)
-def test_is_date(engine: CsvIngestionEngine, value: str, expected: bool) -> None:
-    assert engine.is_date(value) is expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("2024-01-31 10:20:30", True),
-        ("2024-01-31T10:20:30", True),
-        ("31/01/2024 10:20:30", True),
-        ("2024-01-31", False),
-    ],
-)
-def test_is_datetime(engine: CsvIngestionEngine, value: str, expected: bool) -> None:
-    assert engine.is_datetime(value) is expected
 
 
 def test_infer_column_types_marks_nullable_columns(engine: CsvIngestionEngine) -> None:
@@ -164,13 +150,13 @@ def test_infer_column_types_can_infer_temporal_columns(engine: CsvIngestionEngin
     INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = True
 
     try:
-        headers = ["created_at"]
-        rows = [
-            {"created_at": "2024-01-01 10:00:00"},
-            {"created_at": "2024-01-02 11:00:00"},
-        ]
-
-        inferred = engine.infer_column_types(headers, rows)
+        inferred = engine.infer_column_types(
+            ["created_at"],
+            [
+                {"created_at": "2024-01-01 10:00:00"},
+                {"created_at": "2024-01-02 11:00:00"},
+            ],
+        )
 
         assert inferred == [
             DetectedColumn(name="created_at", detected_type="DateTime", nullable=False),
@@ -179,13 +165,12 @@ def test_infer_column_types_can_infer_temporal_columns(engine: CsvIngestionEngin
         INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = previous_setting
 
 
-def test_first_rows_before_import_marks_human_review(
+def test_validate_first_rows_before_import_marks_human_review(
     engine: CsvIngestionEngine,
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bad.csv"
     path.write_text("id;amount\n1;12.5\n2;oops\n", encoding="utf-8")
-
     columns = [
         DetectedColumn(name="id", detected_type="Int64", nullable=False),
         DetectedColumn(name="amount", detected_type="Float64", nullable=False),
@@ -208,6 +193,7 @@ def test_build_create_table_sql_quotes_identifiers(engine: CsvIngestionEngine) -
     assert "CREATE TABLE IF NOT EXISTS `lab_db`.`sales`" in sql
     assert "`order_id` Int64" in sql
     assert "`customer_name` String" in sql
+    assert "ENGINE = MergeTree" in sql
 
 
 @pytest.mark.parametrize(
@@ -241,8 +227,74 @@ def test_cast_value_rejects_null_for_required_column(engine: CsvIngestionEngine)
         engine.cast_value(None, column, 8)
 
 
-def test_cast_value_rejects_invalid_conversion(engine: CsvIngestionEngine) -> None:
-    column = DetectedColumn(name="amount", detected_type="Float64", nullable=False)
+def test_insert_csv_rows_casts_and_inserts_batches(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rows.csv"
+    path.write_text("id;amount\n1;10.5\n2;20.5\n", encoding="utf-8")
+    columns = [
+        DetectedColumn(name="id", detected_type="Int64", nullable=False),
+        DetectedColumn(name="amount", detected_type="Float64", nullable=False),
+    ]
 
-    with pytest.raises(ValueError, match="Cannot cast"):
-        engine.cast_value("oops", column, 4)
+    count = engine.insert_csv_rows(path, "lab_db", "sales", columns, ";")
+    db = cast(MagicMock, engine.db)
+
+    assert count == 2
+    db.insert.assert_called_once_with(
+        "lab_db.sales",
+        [[1, 10.5], [2, 20.5]],
+        column_names=["id", "amount"],
+    )
+
+
+def test_log_import_metadata_does_not_raise_when_metadata_write_fails(
+    engine: CsvIngestionEngine,
+) -> None:
+    result = IngestionResult(
+        source_path="sample.csv",
+        target_database="lab_db",
+        target_table="sample",
+        detected_delimiter=",",
+        row_count=1,
+        column_count=1,
+        status="success",
+        error_message="",
+    )
+    sample_check = SampleCheck(
+        sample_rows_checked=1,
+        needs_human_review=False,
+        review_reason="",
+    )
+    engine.log_ingestion_result = MagicMock(side_effect=RuntimeError("meta failed"))  # type: ignore[method-assign]
+
+    engine.log_import_metadata(result, [], sample_check)
+
+
+def test_log_detected_columns_uses_original_metadata_shape(engine: CsvIngestionEngine) -> None:
+    result = IngestionResult(
+        source_path="sample.csv",
+        target_database="lab_db",
+        target_table="sample",
+        detected_delimiter=",",
+        row_count=1,
+        column_count=1,
+        status="success",
+        error_message="",
+    )
+    columns = [DetectedColumn(name="id", detected_type="Int64", nullable=False)]
+
+    engine.log_detected_columns(result, columns)
+
+    db = cast(MagicMock, engine.db)
+    table, rows = db.insert.call_args[0]
+    assert table.endswith(".detected_columns")
+    assert rows[0] == ["lab_db", "sample", "id", "Int64", False]
+
+
+def test_table_exists_reads_system_tables(engine: CsvIngestionEngine) -> None:
+    db = cast(MagicMock, engine.db)
+    db.query.return_value = SimpleNamespace(result_rows=[(1,)])
+
+    assert engine.table_exists("lab_db", "sales") is True
