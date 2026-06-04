@@ -7,14 +7,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 from config.scoring import INGESTION_SETTINGS
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB
+from core.db_client import DbClient
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
 from core.schema import q_ident
 
 logger = get_logger(__name__)
 
-NULL_TOKENS = {"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"}
+NULL_TOKENS: frozenset[str] = frozenset(
+    {"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"}
+)
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
 
@@ -56,7 +59,7 @@ class CsvIngestionEngine:
     Import CSV files into ClickHouse while keeping metadata about each import.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: DbClient):
         self.db = db
 
     def import_csv_to_clickhouse(
@@ -94,7 +97,7 @@ class CsvIngestionEngine:
                     status="needs_human_review",
                     error_message=sample_check.review_reason,
                 )
-                self.log_import_metadata(result, columns, sample_check)
+                self.log_import_metadata_safely(result, columns, sample_check)
                 logger.warning("Import blocked for human review: %s", path)
                 return asdict(result)
 
@@ -125,11 +128,11 @@ class CsvIngestionEngine:
                 status="failed",
                 error_message=str(exc),
             )
-            self.log_import_metadata(result, columns, sample_check)
+            self.log_import_metadata_safely(result, columns, sample_check)
             logger.error("CSV import failed for %s: %s", path, exc)
             raise
 
-        self.log_import_metadata(result, columns, sample_check)
+        self.log_import_metadata_safely(result, columns, sample_check)
         logger.info("CSV imported: %s rows into %s.%s", row_count, database, table)
         return asdict(result)
 
@@ -180,7 +183,7 @@ class CsvIngestionEngine:
         try:
             return csv.Sniffer().sniff(sample, delimiters="".join(DELIMITERS)).delimiter
         except csv.Error:
-            return max(DELIMITERS, key=sample.count)
+            return self.guess_delimiter_from_rows(sample)
 
     def read_csv_sample(
         self,
@@ -188,34 +191,23 @@ class CsvIngestionEngine:
         delimiter: str,
         sample_size: int | None,
     ) -> tuple[list[str], list[dict]]:
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = reader.fieldnames or []
+        original_headers = self.read_original_headers(path, delimiter)
+        headers = self.dedupe_names(
+            [self.clean_identifier(name) for name in original_headers]
+        )
 
-            if not original_headers:
-                raise ValueError(f"CSV file has no header: {path}")
+        rows = []
 
-            headers = self.dedupe_names(
-                [self.clean_identifier(name) for name in original_headers]
-            )
+        for index, (_, row_data) in enumerate(
+            self.iter_csv_rows(path, delimiter, headers)
+        ):
+            if sample_size is not None and index >= sample_size:
+                break
 
-            rows = []
+            if self.is_dirty_row(row_data):
+                continue
 
-            for index, row in enumerate(reader):
-                if sample_size is not None and index >= sample_size:
-                    break
-
-                self.check_malformed_row(row, path, index + 2, delimiter)
-
-                row_data = {
-                    headers[i]: row.get(original_headers[i])
-                    for i in range(len(original_headers))
-                }
-
-                if self.is_dirty_row(row_data):
-                    continue
-
-                rows.append(row_data)
+            rows.append(row_data)
 
         return headers, rows
 
@@ -275,28 +267,19 @@ class CsvIngestionEngine:
         checked_rows = 0
 
         try:
-            with path.open("r", encoding="utf-8-sig", newline="") as file:
-                reader = csv.DictReader(file, delimiter=delimiter)
-                original_headers = reader.fieldnames or []
+            column_names = [column.name for column in columns]
 
-                for line_number, row in enumerate(reader, start=2):
-                    if checked_rows >= row_limit:
-                        break
+            for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+                if checked_rows >= row_limit:
+                    break
 
-                    self.check_malformed_row(row, path, line_number, delimiter)
+                if self.is_dirty_row(row_data):
+                    continue
 
-                    row_data = {
-                        columns[index].name: row.get(original_headers[index])
-                        for index in range(len(columns))
-                    }
+                for column in columns:
+                    self.cast_value(row_data[column.name], column, line_number)
 
-                    if self.is_dirty_row(row_data):
-                        continue
-
-                    for column in columns:
-                        self.cast_value(row_data[column.name], column, line_number)
-
-                    checked_rows += 1
+                checked_rows += 1
 
         except (ValueError, TypeError, KeyError, IndexError) as exc:
             return SampleCheck(
@@ -384,40 +367,36 @@ ORDER BY tuple()
         columns: list[DetectedColumn],
         delimiter: str,
     ) -> int:
+        """
+        Insert CSV rows in batches.
+
+        ClickHouse inserts are not transactional here: if a later batch fails,
+        earlier batches are already stored. Use if_exists="replace" for an
+        idempotent full reload.
+        """
         column_names = [column.name for column in columns]
         total_rows = 0
         batch: list[list[Any]] = []
 
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = reader.fieldnames or []
+        for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+            if self.is_dirty_row(row_data):
+                continue
 
-            for line_number, row in enumerate(reader, start=2):
-                self.check_malformed_row(row, path, line_number, delimiter)
+            batch.append(
+                [
+                    self.cast_value(row_data[column.name], column, line_number)
+                    for column in columns
+                ]
+            )
 
-                row_data = {
-                    column_names[index]: row.get(original_headers[index])
-                    for index in range(len(columns))
-                }
-
-                if self.is_dirty_row(row_data):
-                    continue
-
-                batch.append(
-                    [
-                        self.cast_value(row_data[column.name], column, line_number)
-                        for column in columns
-                    ]
+            if len(batch) >= BATCH_SIZE:
+                self.db.insert(
+                    f"{database}.{table}",
+                    batch,
+                    column_names=column_names,
                 )
-
-                if len(batch) >= BATCH_SIZE:
-                    self.db.insert(
-                        f"{database}.{table}",
-                        batch,
-                        column_names=column_names,
-                    )
-                    total_rows += len(batch)
-                    batch = []
+                total_rows += len(batch)
+                batch = []
 
         if batch:
             self.db.insert(
@@ -429,6 +408,72 @@ ORDER BY tuple()
 
         return total_rows
 
+    def iter_csv_rows(
+        self,
+        path: Path,
+        delimiter: str,
+        column_names: list[str],
+    ):
+        with path.open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file, delimiter=delimiter)
+            original_headers = reader.fieldnames or []
+
+            if not original_headers:
+                raise ValueError(f"CSV file has no header: {path}")
+
+            if len(original_headers) < len(column_names):
+                raise ValueError(
+                    f"CSV file has fewer columns than expected: {path}"
+                )
+
+            for line_number, row in enumerate(reader, start=2):
+                self.check_malformed_row(row, path, line_number, delimiter)
+
+                yield line_number, {
+                    column_names[index]: row.get(original_headers[index])
+                    for index in range(len(column_names))
+                }
+
+    @staticmethod
+    def read_original_headers(path: Path, delimiter: str) -> list[str]:
+        with path.open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file, delimiter=delimiter)
+            original_headers = list(reader.fieldnames or [])
+
+        if not original_headers:
+            raise ValueError(f"CSV file has no header: {path}")
+
+        return original_headers
+
+    @staticmethod
+    def guess_delimiter_from_rows(sample: str) -> str:
+        lines = [line for line in sample.splitlines() if line.strip()]
+
+        if not lines:
+            return ","
+
+        best_delimiter = ","
+        best_score = (-1, -1)
+
+        for delimiter in DELIMITERS:
+            column_counts = [
+                len(next(csv.reader([line], delimiter=delimiter)))
+                for line in lines[:10]
+            ]
+            common_count = max(set(column_counts), key=column_counts.count)
+            stable_lines = column_counts.count(common_count)
+
+            if common_count <= 1:
+                continue
+
+            score = (stable_lines, common_count)
+
+            if score > best_score:
+                best_score = score
+                best_delimiter = delimiter
+
+        return best_delimiter
+
     def log_import_metadata(
         self,
         result: IngestionResult,
@@ -438,6 +483,17 @@ ORDER BY tuple()
         self.log_ingestion_result(result)
         self.log_detected_columns(result, columns)
         self.log_ingestion_source(result, sample_check)
+
+    def log_import_metadata_safely(
+        self,
+        result: IngestionResult,
+        columns: list[DetectedColumn],
+        sample_check: SampleCheck,
+    ) -> None:
+        try:
+            self.log_import_metadata(result, columns, sample_check)
+        except Exception as exc:
+            logger.warning("Metadata logging failed for %s: %s", result.source_path, exc)
 
     def log_ingestion_result(self, result: IngestionResult) -> None:
         self.db.insert(

@@ -8,7 +8,12 @@ import pytest
 from unittest.mock import MagicMock
 
 from config.scoring import INGESTION_SETTINGS
-from ingestion.csv_loader import CsvIngestionEngine, DetectedColumn
+from ingestion.csv_loader import (
+    CsvIngestionEngine,
+    DetectedColumn,
+    IngestionResult,
+    SampleCheck,
+)
 
 
 @pytest.fixture
@@ -38,6 +43,27 @@ def test_detect_delimiter_falls_back_to_most_frequent_delimiter(
     monkeypatch.setattr(csv.Sniffer, "sniff", raise_sniff)
 
     assert engine.detect_delimiter(path) == "\t"
+
+
+def test_detect_delimiter_fallback_prefers_stable_columns(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "sample.csv"
+    path.write_text(
+        "id;comment;score\n"
+        "1;hello, with comma;10\n"
+        "2;another, comma;20\n",
+        encoding="utf-8",
+    )
+
+    def raise_sniff(*args, **kwargs):
+        raise csv.Error("cannot sniff")
+
+    monkeypatch.setattr(csv.Sniffer, "sniff", raise_sniff)
+
+    assert engine.detect_delimiter(path) == ";"
 
 
 def test_check_malformed_row_rejects_extra_columns(
@@ -246,3 +272,24 @@ def test_cast_value_rejects_invalid_conversion(engine: CsvIngestionEngine) -> No
 
     with pytest.raises(ValueError, match="Cannot cast"):
         engine.cast_value("oops", column, 4)
+
+
+def test_log_import_metadata_safely_does_not_raise(engine: CsvIngestionEngine) -> None:
+    result = IngestionResult(
+        source_path="sample.csv",
+        target_database="lab_db",
+        target_table="sample",
+        detected_delimiter=",",
+        row_count=1,
+        column_count=1,
+        status="success",
+        error_message="",
+    )
+    sample_check = SampleCheck(
+        sample_rows_checked=1,
+        needs_human_review=False,
+        review_reason="",
+    )
+    engine.log_import_metadata = MagicMock(side_effect=RuntimeError("meta failed"))  # type: ignore[method-assign]
+
+    engine.log_import_metadata_safely(result, [], sample_check)
