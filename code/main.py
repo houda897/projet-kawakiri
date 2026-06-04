@@ -13,6 +13,7 @@ from modeling.candidate_builder import DecisionModelCandidateBuilder
 from profiling.basic_profile import ProfileEngine
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from validation.structural_validator import StructuralValidator
 
 logger = get_logger(__name__)
 
@@ -153,6 +154,15 @@ def run_model_candidate_building() -> None:
     builder.print_candidates(candidates)
 
 
+def run_structural_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    validator = StructuralValidator(db)
+    results = validator.validate_stored_candidates()
+    validator.store_results(results)
+    validator.print_results(results)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Kawakiri")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -241,6 +251,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     model_candidates_parser.set_defaults(
         handler=lambda args: run_model_candidate_building()
+    )
+
+    structural_validation_parser = subparsers.add_parser(
+        "validate-structure",
+        help="Validate stored decision model candidates with structural rules",
+    )
+    structural_validation_parser.set_defaults(
+        handler=lambda args: run_structural_validation()
     )
 
     return parser
