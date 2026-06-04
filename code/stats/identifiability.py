@@ -196,10 +196,12 @@ class IdentifiabilityEngine:
 
         current_table = None
 
+        from colorama import Fore,Style
+
         for result in results:
             if result.table_name != current_table:
                 current_table = result.table_name
-                logger.info("=== %s ===", result.table_name)
+                logger.info(Fore.GREEN + "=== %s ===" + Style.RESET_ALL, result.table_name)
 
             logger.info(
                 "%s | score=%s | diagnostic=%s",

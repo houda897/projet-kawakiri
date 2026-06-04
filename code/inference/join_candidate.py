@@ -222,6 +222,13 @@ class JoinEngine:
             lambda: defaultdict(list)
         )
 
+        from colorama import Fore,Style,init
+        from datetime import datetime
+
+        init()
+        iter = 0
+        time = datetime.now()
+
         for col in source_columns:
             clean_type = self._clean_type(col.column_type)
             cols_by_table[col.table_name].append(col)
@@ -230,6 +237,11 @@ class JoinEngine:
         candidates = []
 
         for primary_key in primary_keys:
+
+            iter += 1
+            elapsed_time = datetime.now() - time
+            print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
+
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [
                 self._clean_type(t.strip())
@@ -247,6 +259,11 @@ class JoinEngine:
                 continue
 
             for table_name in cols_by_table:
+
+                iter += 1
+                elapsed_time = datetime.now() - time
+                print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
+                
                 if table_name == primary_key.table_name:
                     continue
 
@@ -267,6 +284,11 @@ class JoinEngine:
                         continue
 
                     for combo in itertools.product(*pools):
+
+                        iter += 1
+                        elapsed_time = datetime.now() - time
+                        print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
+
                         if len({col.column_name for col in combo}) != len(combo):
                             continue
 
@@ -278,6 +300,11 @@ class JoinEngine:
                         )
 
                 for combo_str in valid_source_combos:
+
+                    iter += 1
+                    elapsed_time = datetime.now() - time
+                    print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
+
                     result = self.evaluate_join_to_primary_key(
                         source_table=table_name,
                         source_column=combo_str,

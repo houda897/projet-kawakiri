@@ -13,6 +13,8 @@ from modeling.candidate_builder import DecisionModelCandidateBuilder
 from profiling.basic_profile import ProfileEngine
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from modeling.model_ranking import ModelRanking
+from colorama import Fore,Style,init
 
 logger = get_logger(__name__)
 
@@ -64,6 +66,9 @@ def run_identifiability() -> None:
     results = engine.compute_scores()
     engine.store_scores(results)
 
+    print(Fore.YELLOW + '\nResultats identifiability : \n' + Style.RESET_ALL)
+    engine.print_scores(results)
+
 
 def run_pk_inference() -> None:
     db = get_manager()
@@ -71,6 +76,9 @@ def run_pk_inference() -> None:
 
     candidates = engine.infer_candidates()
     engine.store_candidates(candidates)
+
+    print(Fore.YELLOW + '\nCandidats trouvé : \n' + Style.RESET_ALL)
+    engine.print_candidates(candidates)
 
 
 def run_join(
@@ -122,6 +130,9 @@ def run_adjacency() -> None:
     matrix = adjacency_engine.build_matrix(edges)
 
     adjacency_engine.store_edges(edges)
+    print("")
+    logger.info('Jointures retenues par validation de Levenstein :\n')
+    adjacency_engine.print_edges(edges)
     adjacency_engine.print_matrix(matrix)
     adjacency_engine.print_binary_matrix(matrix)
 
@@ -147,10 +158,17 @@ def run_sql_view_generation() -> None:
 def run_model_candidate_building() -> None:
     db = get_manager()
     ensure_meta_schema(db)
+
     builder = DecisionModelCandidateBuilder(db)
     candidates = builder.build_candidates()
     builder.store_candidates(candidates)
     builder.print_candidates(candidates)
+
+    raw_candidates = builder.load_candidates()
+    ranking_engine = ModelRanking(db)
+
+    ranked_candidates = ranking_engine.rank_and_store(raw_candidates)
+    ranking_engine.print_ranked_models(ranked_candidates)
 
 
 def build_parser() -> argparse.ArgumentParser:

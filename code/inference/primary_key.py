@@ -289,15 +289,8 @@ class PrimaryKeyEngine:
             return
 
         for candidate in candidates:
-            logger.info(
-                "%s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s",
-                candidate.database_name,
-                candidate.table_name,
-                candidate.column_name,
-                candidate.confidence,
-                candidate.uniqueness_ratio,
-                candidate.reason,
-            )
+            tab = f'{candidate.database_name}.{candidate.table_name}'
+            logger.info(f'{tab:<40} -> {candidate.column_name:<20} | confidence={candidate.confidence:<5} | uniqueness={candidate.uniqueness_ratio:<5} | reason={candidate.reason}')
 
 
 def candidates_to_dicts(candidates: list[PrimaryKeyCandidate]) -> list[dict]:
