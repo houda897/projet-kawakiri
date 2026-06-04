@@ -55,7 +55,7 @@ class SampleCheck:
 
 class CsvIngestionEngine:
     """
-    Import CSV files into ClickHouse while keeping metadata about each import.
+    Import CSV files into ClickHouse and keep simple ingestion metadata.
     """
 
     def __init__(self, db: clickhouse_manager):
@@ -86,30 +86,29 @@ class CsvIngestionEngine:
             sample_check = self.validate_first_rows_before_import(path, delimiter, columns)
 
             if sample_check.needs_human_review:
-                result = IngestionResult(
-                    source_path=str(path),
-                    target_database=database,
-                    target_table=table,
-                    detected_delimiter=delimiter,
+                result = self.build_result(
+                    path=path,
+                    database=database,
+                    table=table,
+                    delimiter=delimiter,
                     row_count=0,
                     column_count=len(columns),
                     status="needs_human_review",
                     error_message=sample_check.review_reason,
                 )
-                self.log_import_metadata_safely(result, columns, sample_check)
+                self.log_import_metadata(result, columns, sample_check)
                 logger.warning("Import blocked for human review: %s", path)
                 return asdict(result)
 
             self.create_database(database)
             self.prepare_table(database, table, columns, if_exists)
-
             row_count = self.insert_csv_rows(path, database, table, columns, delimiter)
 
-            result = IngestionResult(
-                source_path=str(path),
-                target_database=database,
-                target_table=table,
-                detected_delimiter=delimiter,
+            result = self.build_result(
+                path=path,
+                database=database,
+                table=table,
+                delimiter=delimiter,
                 row_count=row_count,
                 column_count=len(columns),
                 status="success",
@@ -117,21 +116,21 @@ class CsvIngestionEngine:
             )
 
         except Exception as exc:
-            result = IngestionResult(
-                source_path=str(path),
-                target_database=database,
-                target_table=table,
-                detected_delimiter=delimiter,
+            result = self.build_result(
+                path=path,
+                database=database,
+                table=table,
+                delimiter=delimiter,
                 row_count=row_count,
                 column_count=len(columns),
                 status="failed",
                 error_message=str(exc),
             )
-            self.log_import_metadata_safely(result, columns, sample_check)
+            self.log_import_metadata(result, columns, sample_check)
             logger.error("CSV import failed for %s: %s", path, exc)
             raise
 
-        self.log_import_metadata_safely(result, columns, sample_check)
+        self.log_import_metadata(result, columns, sample_check)
         logger.info("CSV imported: %s rows into %s.%s", row_count, database, table)
         return asdict(result)
 
@@ -151,17 +150,11 @@ class CsvIngestionEngine:
             raise NotADirectoryError(f"Expected a folder, got: {folder}")
 
         results = []
-        first_import_by_table: set[str] = set()
+        imported_tables: set[str] = set()
 
         for csv_file in sorted(folder.rglob("*.csv")):
-            relative_path = csv_file.relative_to(folder)
-            table_source_name = (
-                relative_path.parts[0]
-                if len(relative_path.parts) > 1
-                else csv_file.stem
-            )
-            table_name = self.clean_identifier(table_source_name)
-            import_mode = if_exists if table_name not in first_import_by_table else "append"
+            table_name = self.table_name_from_folder_file(folder, csv_file)
+            import_mode = if_exists if table_name not in imported_tables else "append"
 
             results.append(
                 self.import_csv_to_clickhouse(
@@ -172,7 +165,7 @@ class CsvIngestionEngine:
                     if_exists=import_mode,
                 )
             )
-            first_import_by_table.add(table_name)
+            imported_tables.add(table_name)
 
         return results
 
@@ -189,38 +182,32 @@ class CsvIngestionEngine:
         path: Path,
         delimiter: str,
         sample_size: int | None,
-    ) -> tuple[list[str], list[dict]]:
+    ) -> tuple[list[str], list[dict[str, str | None]]]:
         original_headers = self.read_original_headers(path, delimiter)
         headers = self.dedupe_names(
-            [self.clean_identifier(name) for name in original_headers]
+            [self.clean_identifier(header) for header in original_headers]
         )
 
         rows = []
-
-        for index, (_, row_data) in enumerate(
-            self.iter_csv_rows(path, delimiter, headers)
-        ):
+        for index, (_, row_data) in enumerate(self.iter_csv_rows(path, delimiter, headers)):
             if sample_size is not None and index >= sample_size:
                 break
 
-            if self.is_dirty_row(row_data):
-                continue
-
-            rows.append(row_data)
+            if not self.is_dirty_row(row_data):
+                rows.append(row_data)
 
         return headers, rows
 
     def infer_column_types(
         self,
         headers: list[str],
-        rows: list[dict],
+        rows: list[dict[str, str | None]],
     ) -> list[DetectedColumn]:
         columns = []
 
         for header in headers:
             values = [self.clean_value(row.get(header)) for row in rows]
             present_values = [value for value in values if value is not None]
-
             nullable = len(present_values) < len(values)
             column_type = self.detect_type(present_values)
 
@@ -264,10 +251,9 @@ class CsvIngestionEngine:
         row_limit: int = 5,
     ) -> SampleCheck:
         checked_rows = 0
+        column_names = [column.name for column in columns]
 
         try:
-            column_names = [column.name for column in columns]
-
             for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
                 if checked_rows >= row_limit:
                     break
@@ -329,12 +315,10 @@ class CsvIngestionEngine:
         WHERE database = %(database)s
           AND name = %(table)s
         """
-
         row = self.db.query(
             sql,
             parameters={"database": database, "table": table},
         ).result_rows[0]
-
         return row[0] > 0
 
     def build_create_table_sql(
@@ -369,9 +353,8 @@ ORDER BY tuple()
         """
         Insert CSV rows in batches.
 
-        ClickHouse inserts are not transactional here: if a later batch fails,
-        earlier batches are already stored. Use if_exists="replace" for an
-        idempotent full reload.
+        Inserts are not transactional: if a later batch fails, earlier batches
+        are already stored. Use if_exists="replace" for full reloads.
         """
         column_names = [column.name for column in columns]
         total_rows = 0
@@ -389,23 +372,24 @@ ORDER BY tuple()
             )
 
             if len(batch) >= BATCH_SIZE:
-                self.db.insert(
-                    f"{database}.{table}",
-                    batch,
-                    column_names=column_names,
-                )
+                self.insert_batch(database, table, batch, column_names)
                 total_rows += len(batch)
                 batch = []
 
         if batch:
-            self.db.insert(
-                f"{database}.{table}",
-                batch,
-                column_names=column_names,
-            )
+            self.insert_batch(database, table, batch, column_names)
             total_rows += len(batch)
 
         return total_rows
+
+    def insert_batch(
+        self,
+        database: str,
+        table: str,
+        batch: list[list[Any]],
+        column_names: list[str],
+    ) -> None:
+        self.db.insert(f"{database}.{table}", batch, column_names=column_names)
 
     def iter_csv_rows(
         self,
@@ -415,19 +399,16 @@ ORDER BY tuple()
     ):
         with path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = reader.fieldnames or []
+            original_headers = list(reader.fieldnames or [])
 
             if not original_headers:
                 raise ValueError(f"CSV file has no header: {path}")
 
             if len(original_headers) < len(column_names):
-                raise ValueError(
-                    f"CSV file has fewer columns than expected: {path}"
-                )
+                raise ValueError(f"CSV file has fewer columns than expected: {path}")
 
             for line_number, row in enumerate(reader, start=2):
                 self.check_malformed_row(row, path, line_number, delimiter)
-
                 yield line_number, {
                     column_names[index]: row.get(original_headers[index])
                     for index in range(len(column_names))
@@ -437,12 +418,12 @@ ORDER BY tuple()
     def read_original_headers(path: Path, delimiter: str) -> list[str]:
         with path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = list(reader.fieldnames or [])
+            headers = list(reader.fieldnames or [])
 
-        if not original_headers:
+        if not headers:
             raise ValueError(f"CSV file has no header: {path}")
 
-        return original_headers
+        return headers
 
     @staticmethod
     def guess_delimiter_from_rows(sample: str) -> str:
@@ -466,7 +447,6 @@ ORDER BY tuple()
                 continue
 
             score = (stable_lines, common_count)
-
             if score > best_score:
                 best_score = score
                 best_delimiter = delimiter
@@ -479,18 +459,10 @@ ORDER BY tuple()
         columns: list[DetectedColumn],
         sample_check: SampleCheck,
     ) -> None:
-        self.log_ingestion_result(result)
-        self.log_detected_columns(result, columns)
-        self.log_ingestion_source(result, sample_check)
-
-    def log_import_metadata_safely(
-        self,
-        result: IngestionResult,
-        columns: list[DetectedColumn],
-        sample_check: SampleCheck,
-    ) -> None:
         try:
-            self.log_import_metadata(result, columns, sample_check)
+            self.log_ingestion_result(result)
+            self.log_detected_columns(result, columns)
+            self.log_ingestion_source(result, sample_check)
         except Exception as exc:
             logger.warning("Metadata logging failed for %s: %s", result.source_path, exc)
 
@@ -578,6 +550,38 @@ ORDER BY tuple()
         )
 
     @staticmethod
+    def build_result(
+        path: Path,
+        database: str,
+        table: str,
+        delimiter: str,
+        row_count: int,
+        column_count: int,
+        status: str,
+        error_message: str,
+    ) -> IngestionResult:
+        return IngestionResult(
+            source_path=str(path),
+            target_database=database,
+            target_table=table,
+            detected_delimiter=delimiter,
+            row_count=row_count,
+            column_count=column_count,
+            status=status,
+            error_message=error_message,
+        )
+
+    @classmethod
+    def table_name_from_folder_file(cls, folder: Path, csv_file: Path) -> str:
+        relative_path = csv_file.relative_to(folder)
+        table_source_name = (
+            relative_path.parts[0]
+            if len(relative_path.parts) > 1
+            else csv_file.stem
+        )
+        return cls.clean_identifier(table_source_name)
+
+    @staticmethod
     def check_malformed_row(
         row: dict,
         path: Path,
@@ -659,7 +663,6 @@ ORDER BY tuple()
             return None
 
         value = value.strip()
-
         if value.lower() in NULL_TOKENS:
             return None
 
@@ -746,7 +749,6 @@ ORDER BY tuple()
                     return date.fromisoformat(value)
 
                 return datetime.strptime(value, fmt).date()
-
             except ValueError:
                 pass
 
