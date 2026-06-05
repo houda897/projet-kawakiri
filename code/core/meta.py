@@ -288,6 +288,24 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, model_id, rule_name, created_at)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.semantic_homogeneity
+    (
+        database_name String,
+        table_name String,
+        role String,
+        is_valid Bool,
+        homogeneity_score Float64,
+        measure_like_columns String,
+        descriptive_like_columns String,
+        issue_count UInt64,
+        reason String,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, table_name)
+    """)
+
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
     "column_stats",
@@ -301,6 +319,7 @@ COMPUTED_METADATA_TABLES = (
     "decision_model_scores",
     "decision_model_validations",
     "decision_model_validation_issues",
+    "semantic_homogeneity"
 )
 
 def clear_computed_metadata(db) -> None:
