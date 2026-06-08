@@ -306,6 +306,25 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, table_name)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.aggregation_stability
+    (
+        database_name String,
+        model_id String,
+        fact_table String,
+        dimension_table String,
+        measure_column String,
+        fine_grain_sum Float64,
+        aggregated_sum Float64,
+        delta Float64,
+        is_stable Bool,
+        reason String,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, fact_table, dimension_table)
+    """)
+
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
     "column_stats",
@@ -320,6 +339,7 @@ COMPUTED_METADATA_TABLES = (
     "decision_model_validations",
     "decision_model_validation_issues",
     "semantic_homogeneity"
+    "aggregation_stability"
 )
 
 def clear_computed_metadata(db) -> None:
