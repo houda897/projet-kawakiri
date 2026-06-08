@@ -51,3 +51,10 @@ PARSIMONY_WEIGHTS = {
     "fact_coverage_bonus": 15.0,     # Reward if the model unify multple fact tables
     "shared_dimension_bonus": 10.0   # Reward for shared dimension between multiples fact tables
 }
+
+SEMANTIC_HOMOGENEITY_WEIGHTS = {
+    "threshold" : 0.85,
+    "entropy_weight" : 0.4,
+    "variation_coef_weight" : 0.3,
+    "skewness_weight" : 0.3,
+}
