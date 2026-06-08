@@ -56,7 +56,6 @@ run_join_inference()
 time6 = datetime.now()
 segment_time = time6 - time5
 absolute_time = time6 - time0
-print(Fore.RED + f'--- *** --- join_inference --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
 print(Fore.GREEN + '--- *** --- adjacency --- *** ---\n' + Style.RESET_ALL)
 run_adjacency()
@@ -64,7 +63,7 @@ run_adjacency()
 time7 = datetime.now()
 segment_time = time7 - time6
 absolute_time = time7 - time0
-print(Fore.RED + f'--- *** --- adjacency --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
+print(Fore.RED + f'\n--- *** --- adjacency --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
 print('\n' + '=' * 80 + '\n')
 

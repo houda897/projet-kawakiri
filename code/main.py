@@ -133,7 +133,26 @@ def run_adjacency() -> None:
     adjacency_engine.store_edges(edges)
     print("")
     logger.info('Jointures retenues par validation de Levenstein :\n')
-    adjacency_engine.print_edges(edges)
+    
+    WEAK_join =[]
+    COINCIDENCE_join = []
+    CONFIRMED_join = []
+
+    for edge in edges :
+        if edge.evidence == 'WEAK':
+            WEAK_join.append(edge)
+        if edge.evidence == 'COINCIDENCE':
+            COINCIDENCE_join.append(edge)
+        if edge.evidence == 'CONFIRMED':
+            CONFIRMED_join.append(edge)
+
+    print(f'--- *** --- Nombre de jointure totale trouvée : {len(WEAK_join) + len(COINCIDENCE_join) + len(CONFIRMED_join)}')
+    print(Fore.RED +    f'--- *** --- Jointures WEAK        : {len(WEAK_join)}' + Style.RESET_ALL)
+    print(Fore.YELLOW + f'--- *** --- Jointures COINCIDENCE : {len(COINCIDENCE_join)}' + Style.RESET_ALL)
+    print(Fore.GREEN +  f'--- *** --- Jointures CONFIRMED   : {len(CONFIRMED_join)}' + Style.RESET_ALL)
+
+
+
     adjacency_engine.print_matrix(matrix)
     adjacency_engine.print_binary_matrix(matrix)
 
@@ -164,6 +183,12 @@ def run_model_candidate_building() -> None:
     candidates = builder.build_candidates()
     builder.store_candidates(candidates)
     builder.print_candidates(candidates)
+
+    raw_candidates = builder.load_candidates()
+    ranking_engine = ModelRanking(db)
+
+    ranked_candidates = ranking_engine.rank_and_store(raw_candidates)
+    ranking_engine.print_ranked_models(ranked_candidates)
 
 
 def run_structural_validation() -> None:

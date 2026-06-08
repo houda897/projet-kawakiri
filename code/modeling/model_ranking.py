@@ -73,8 +73,11 @@ class ModelRanking:
 
     @staticmethod
     def print_ranked_models(scored_candidates: list[tuple[DecisionModelCandidate, float]]) -> None:
+        from colorama import Fore,Style
         '''Print the ranked models with their scores and key characteristics'''
-        logger.info("=== MODELS RANKING ===")
+        print("")
+        logger.info(Fore.YELLOW + "=== MODELS RANKING ===" + Style.RESET_ALL)
+        print("")
         for i, (candidate, score) in enumerate(scored_candidates, 1):
             logger.info(
                 "Rang %d | Score: %s | Type: %s | ID: %s",

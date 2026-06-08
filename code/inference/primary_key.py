@@ -283,14 +283,15 @@ class PrimaryKeyEngine:
         """
         Log all primary-key candidates.
         """
-
+        from colorama import Fore,Style
         if not candidates:
             logger.info("No primary-key candidates found.")
             return
 
         for candidate in candidates:
             tab = f'{candidate.database_name}.{candidate.table_name}'
-            logger.info(f'{tab:<40} -> {candidate.column_name:<20} | confidence={candidate.confidence:<5} | uniqueness={candidate.uniqueness_ratio:<5} | reason={candidate.reason}')
+            pk = Fore.YELLOW + f'{candidate.column_name}' + Style.RESET_ALL
+            logger.info(f'{tab:<40} -> {pk:<15} | confidence={candidate.confidence:<5} | uniqueness={candidate.uniqueness_ratio:<5} | reason={candidate.reason}')
 
 
 def candidates_to_dicts(candidates: list[PrimaryKeyCandidate]) -> list[dict]:
