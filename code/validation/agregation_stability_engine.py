@@ -9,12 +9,11 @@ logger = get_logger(__name__)
 class AggregationStabilityEngine:
     def __init__(self, db: clickhouse_manager):
         self.db = db
-        # Marge de tolérance pour les erreurs d'arrondi des nombres à virgule flottante
         self.epsilon = 0.001 
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
-
         '''Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication'''
+
         reports = []
 
         for edge in candidate.edges:
@@ -82,6 +81,7 @@ class AggregationStabilityEngine:
 
     def _get_best_measure(self, table_name: str):
         '''Find the best numeric column to use as test mesure (excluing PK)'''
+        
         sql = f"""
         SELECT column_name 
         FROM {q_ident(META_DB)}.column_stats
