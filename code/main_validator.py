@@ -65,6 +65,19 @@ def jointure_ajdacence():
     print(Fore.RED + f'--- *** --- adjacency --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
     print('\n' + '=' * 80 + '\n')
+
+def table_role():
+    print(Fore.GREEN + '--- *** --- table_roles --- *** ---' + Style.RESET_ALL)
+    run_table_roles()
+
+    time6 = datetime.now()
+    segment_time = time6 - time5
+    absolute_time = time6 - time0
+    print(Fore.RED + f'--- *** --- table_roles --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
+
+    print('\n' + '=' * 80 + '\n')
+
+    
     
 ############################
 ## -- Work in Progress -- ##
@@ -72,21 +85,15 @@ def jointure_ajdacence():
 
 #construction()
 #jointure_ajdacence()
+table_role()
 
-print(Fore.GREEN + '--- *** --- table_roles --- *** ---' + Style.RESET_ALL)
-run_table_roles()
 
-time6 = datetime.now()
-segment_time = time6 - time5
-absolute_time = time6 - time0
-print(Fore.RED + f'--- *** --- table_roles --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
-print('\n' + '=' * 80 + '\n')
 
-print(Fore.GREEN + '--- *** --- model_candidate_building --- *** ---' + Style.RESET_ALL)
+'''print(Fore.GREEN + '--- *** --- model_candidate_building --- *** ---' + Style.RESET_ALL)
 candidates = run_model_candidate_building()
 
 time7 = datetime.now()
 segment_time = time7 - time0
 absolute_time = time7 - time0
-print(Fore.RED + f'--- *** --- model_candidate_building --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
+print(Fore.RED + f'--- *** --- model_candidate_building --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)'''

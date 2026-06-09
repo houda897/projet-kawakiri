@@ -12,7 +12,10 @@ class AggregationStabilityEngine:
         self.epsilon = 0.001 
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
-        '''Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication'''
+        '''
+        Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication
+        Test on sum, coutn and avg
+        '''
 
         reports = []
 
@@ -29,7 +32,6 @@ class AggregationStabilityEngine:
             if not measure_col:
                 continue
 
-            # --- 1. REQUÊTE GRAIN FIN (Somme, Nombre, Moyenne bruts) ---
             sql_fine = f"""
             SELECT 
                 COALESCE(toFloat64(SUM({measure_col})), 0.0),
@@ -38,7 +40,6 @@ class AggregationStabilityEngine:
             FROM {q_ident(CH_DB)}.{q_ident(fact_table)}
             """
             
-            # --- 2. REQUÊTE AGRÉGÉE (Somme, Nombre, Moyenne via LEFT JOIN) ---
             sql_agg = f"""
             SELECT 
                 COALESCE(toFloat64(SUM(F.{measure_col})), 0.0),
@@ -49,27 +50,22 @@ class AggregationStabilityEngine:
             ON F.{fk_col} = D.{pk_col}
             """
 
-            # Exécution des requêtes
             fine_row = self.db.query(sql_fine).result_rows[0]
             agg_row = self.db.query(sql_agg).result_rows[0]
 
             fine_sum, fine_count, fine_avg = fine_row[0], fine_row[1], fine_row[2]
             agg_sum, agg_count, agg_avg = agg_row[0], agg_row[1], agg_row[2]
 
-            # Calcul des Deltas
             delta_sum = abs(fine_sum - agg_sum)
             delta_count = abs(fine_count - agg_count)
             delta_avg = abs(fine_avg - agg_avg)
 
-            # Vérification des règles de stabilité
             is_stable_sum = delta_sum <= self.epsilon
             is_stable_count = delta_count == 0
             is_stable_avg = delta_avg <= self.epsilon
 
-            # Le modèle est stable si les 3 indicateurs sont stables
             is_stable = is_stable_sum and is_stable_count and is_stable_avg
 
-            # Déduction de la cause en cas d'erreur
             reasons = []
             if not is_stable_sum: reasons.append("Instabilité de la SOMME")
             if not is_stable_count: reasons.append("Instabilité du COUNT")
@@ -115,7 +111,9 @@ class AggregationStabilityEngine:
         return rows[0][0] if rows else None
     
     def store_stability(self, reports: list[dict]) -> None:
-        '''Store the stability stats in the clickhouse'''
+        """
+        Persist execution logs and calculation metrics for aggregation tests.
+        """
         clear_metadata_table(self.db, "aggregation_stability")
 
         if not reports:
@@ -128,9 +126,15 @@ class AggregationStabilityEngine:
                 r["fact_table"],
                 r["dimension_table"],
                 r["measure_column"],
-                r["fine_grain_sum"],
-                r["aggregated_sum"],
-                r["delta"],
+                r["fine_sum"],
+                r["agg_sum"],
+                r["delta_sum"],
+                r["fine_count"],
+                r["agg_count"],
+                r["delta_count"],
+                r["fine_avg"],
+                r["agg_avg"],
+                r["delta_avg"],
                 r["is_stable"],
                 r["reason"],
             ]
@@ -146,9 +150,15 @@ class AggregationStabilityEngine:
                 "fact_table",
                 "dimension_table",
                 "measure_column",
-                "fine_grain_sum",
-                "aggregated_sum",
-                "delta",
+                "fine_sum",
+                "agg_sum",
+                "delta_sum",
+                "fine_count",
+                "agg_count",
+                "delta_count",
+                "fine_avg",
+                "agg_avg",
+                "delta_avg",
                 "is_stable",
                 "reason",
             ],
