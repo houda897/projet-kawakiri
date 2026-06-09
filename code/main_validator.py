@@ -81,7 +81,7 @@ segment_time = time6 - time5
 absolute_time = time6 - time0
 print(Fore.RED + f'--- *** --- table_roles --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
-'''print('\n' + '=' * 80 + '\n')
+print('\n' + '=' * 80 + '\n')
 
 print(Fore.GREEN + '--- *** --- model_candidate_building --- *** ---' + Style.RESET_ALL)
 candidates = run_model_candidate_building()
@@ -89,4 +89,4 @@ candidates = run_model_candidate_building()
 time7 = datetime.now()
 segment_time = time7 - time0
 absolute_time = time7 - time0
-print(Fore.RED + f'--- *** --- model_candidate_building --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)'''
+print(Fore.RED + f'--- *** --- model_candidate_building --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
