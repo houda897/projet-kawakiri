@@ -10,9 +10,12 @@ from inference.primary_key import PrimaryKeyEngine
 from inference.table_role import TableRoleEngine
 from ingestion.csv_loader import CsvIngestionEngine
 from modeling.candidate_builder import DecisionModelCandidateBuilder
+from modeling.model_ranking import ModelRanking
 from profiling.basic_profile import ProfileEngine
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from validation.granularity_validator import GranularityValidator
+from validation.model_certification import ModelCertificationEngine
 from validation.structural_validator import StructuralValidator
 
 logger = get_logger(__name__)
@@ -154,6 +157,23 @@ def run_model_candidate_building() -> None:
     builder.print_candidates(candidates)
 
 
+def run_model_ranking() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+
+    builder = DecisionModelCandidateBuilder(db)
+    candidates = builder.load_candidates()
+
+    if not candidates:
+        raise ValueError(
+            "No decision model candidates found. Run build-model-candidates first."
+        )
+
+    ranking = ModelRanking(db)
+    scored_candidates = ranking.rank_and_store(candidates)
+    ranking.print_ranked_models(scored_candidates)
+
+
 def run_structural_validation() -> None:
     db = get_manager()
     ensure_meta_schema(db)
@@ -161,6 +181,24 @@ def run_structural_validation() -> None:
     results = validator.validate_stored_candidates()
     validator.store_results(results)
     validator.print_results(results)
+
+
+def run_granularity_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    validator = GranularityValidator(db)
+    results = validator.validate_stored_candidates()
+    validator.store_results(results)
+    validator.print_results(results)
+
+
+def run_model_certification() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    engine = ModelCertificationEngine(db)
+    results = engine.certify_stored_candidates()
+    engine.store_results(results)
+    engine.print_results(results)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -253,12 +291,34 @@ def build_parser() -> argparse.ArgumentParser:
         handler=lambda args: run_model_candidate_building()
     )
 
+    model_ranking_parser = subparsers.add_parser(
+        "rank-models",
+        help="Rank stored decision model candidates by parsimony",
+    )
+    model_ranking_parser.set_defaults(handler=lambda args: run_model_ranking())
+
     structural_validation_parser = subparsers.add_parser(
         "validate-structure",
         help="Validate stored decision model candidates with structural rules",
     )
     structural_validation_parser.set_defaults(
         handler=lambda args: run_structural_validation()
+    )
+
+    granularity_validation_parser = subparsers.add_parser(
+        "validate-granularity",
+        help="Validate deterministic fact granularity for stored model candidates",
+    )
+    granularity_validation_parser.set_defaults(
+        handler=lambda args: run_granularity_validation()
+    )
+
+    model_certification_parser = subparsers.add_parser(
+        "certify-models",
+        help="Certify stored decision model candidates from ranking and validation results",
+    )
+    model_certification_parser.set_defaults(
+        handler=lambda args: run_model_certification()
     )
 
     return parser

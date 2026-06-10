@@ -331,6 +331,53 @@ def ensure_meta_schema(client) -> None:
     ORDER BY (database_name, model_id, fact_table, dimension_table)
     """)
 
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.granularity_validations
+    (
+        database_name String,
+        model_id String,
+        fact_table String,
+        grain_columns String,
+        duplicate_count UInt64,
+        is_valid Bool,
+        reason String,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, fact_table, created_at)
+    """)
+
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certifications
+    (
+        database_name String,
+        model_id String,
+        status String,
+        is_certified Bool,
+        certification_score Float64,
+        parsimony_score Float64,
+        issue_count UInt64,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, created_at)
+    """)
+
+    client.command(f"""
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certification_issues
+    (
+        database_name String,
+        model_id String,
+        rule_name String,
+        severity String,
+        message String,
+        table_name String,
+        created_at DateTime DEFAULT now()
+    )
+    ENGINE = MergeTree
+    ORDER BY (database_name, model_id, rule_name, created_at)
+    """)
+
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
     "column_stats",
@@ -344,8 +391,11 @@ COMPUTED_METADATA_TABLES = (
     "decision_model_scores",
     "decision_model_validations",
     "decision_model_validation_issues",
-    "semantic_homogeneity"
-    "aggregation_stability"
+    "semantic_homogeneity",
+    "aggregation_stability",
+    "granularity_validations",
+    "model_certifications",
+    "model_certification_issues",
 )
 
 def clear_computed_metadata(db) -> None:
