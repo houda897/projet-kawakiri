@@ -12,7 +12,10 @@ class AggregationStabilityEngine:
         self.epsilon = 0.001 
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
-        '''Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication'''
+        '''
+        Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication
+        Test on sum, coutn and avg
+        '''
 
         reports = []
 
@@ -22,59 +25,69 @@ class AggregationStabilityEngine:
 
             fact_table = edge.source_table
             dim_table = edge.target_table
-            fk_cols = edge.source_columns
-            pk_cols = edge.target_columns
-
-            if not fk_cols or not pk_cols:
-                continue
+            fk_col = edge.source_columns[0]
+            pk_col = edge.target_columns[0]
 
             measure_col = self._get_best_measure(fact_table)
             if not measure_col:
-                logger.debug(f"Aucune mesure numérique trouvée dans {fact_table} pour le test de stabilité.")
                 continue
 
-            fk_col = fk_cols[0]
-            pk_col = pk_cols[0]
-
             sql_fine = f"""
-            SELECT COALESCE(toFloat64(SUM({measure_col})), 0.0) 
+            SELECT 
+                COALESCE(toFloat64(SUM({measure_col})), 0.0),
+                toInt64(COUNT({measure_col})),
+                COALESCE(toFloat64(AVG({measure_col})), 0.0)
             FROM {q_ident(CH_DB)}.{q_ident(fact_table)}
             """
             
             sql_agg = f"""
-            SELECT COALESCE(toFloat64(SUM(agg_measure)), 0.0)
-            FROM (
-                SELECT SUM(F.{measure_col}) as agg_measure
-                FROM {q_ident(CH_DB)}.{q_ident(fact_table)} F
-                LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D
-                ON F.{fk_col} = D.{pk_col}
-                GROUP BY D.{pk_col}
-            )
+            SELECT 
+                COALESCE(toFloat64(SUM(F.{measure_col})), 0.0),
+                toInt64(COUNT(F.{measure_col})),
+                COALESCE(toFloat64(AVG(F.{measure_col})), 0.0)
+            FROM {q_ident(CH_DB)}.{q_ident(fact_table)} F
+            LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D
+            ON F.{fk_col} = D.{pk_col}
             """
 
-            fine_val = self.db.query(sql_fine).result_rows[0][0]
-            agg_val = self.db.query(sql_agg).result_rows[0][0]
-            
-            delta = abs(fine_val - agg_val)
-            is_stable = delta <= self.epsilon
+            fine_row = self.db.query(sql_fine).result_rows[0]
+            agg_row = self.db.query(sql_agg).result_rows[0]
 
-            if is_stable:
-                reason = "Stable"
-            elif agg_val < fine_val:
-                reason = "Data loss during aggregation"
-            else:
-                reason = "Data duplication during aggregation"
+            fine_sum, fine_count, fine_avg = fine_row[0], fine_row[1], fine_row[2]
+            agg_sum, agg_count, agg_avg = agg_row[0], agg_row[1], agg_row[2]
+
+            delta_sum = abs(fine_sum - agg_sum)
+            delta_count = abs(fine_count - agg_count)
+            delta_avg = abs(fine_avg - agg_avg)
+
+            is_stable_sum = delta_sum <= self.epsilon
+            is_stable_count = delta_count == 0
+            is_stable_avg = delta_avg <= self.epsilon
+
+            is_stable = is_stable_sum and is_stable_count and is_stable_avg
+
+            reasons = []
+            if not is_stable_sum: reasons.append("SUM instability")
+            if not is_stable_count: reasons.append("COUNT instability")
+            if not is_stable_avg: reasons.append("AVERAGE instability")
+            reason_str = ", ".join(reasons) if not is_stable else "Stable"
 
             reports.append({
                 "model_id": candidate.model_id,
                 "fact_table": fact_table,
                 "dimension_table": dim_table,
                 "measure_column": measure_col,
-                "fine_grain_sum": fine_val,
-                "aggregated_sum": agg_val,
-                "delta": round(delta, 4),
+                "fine_sum": fine_sum,
+                "agg_sum": agg_sum,
+                "delta_sum": round(delta_sum, 4),
+                "fine_count": fine_count,
+                "agg_count": agg_count,
+                "delta_count": delta_count,
+                "fine_avg": round(fine_avg, 4),
+                "agg_avg": round(agg_avg, 4),
+                "delta_avg": round(delta_avg, 4),
                 "is_stable": is_stable,
-                "reason": reason
+                "reason": reason_str
             })
             
         return reports
@@ -98,7 +111,9 @@ class AggregationStabilityEngine:
         return rows[0][0] if rows else None
     
     def store_stability(self, reports: list[dict]) -> None:
-        '''Store the stability stats in the clickhouse'''
+        """
+        Persist execution logs and calculation metrics for aggregation tests.
+        """
         clear_metadata_table(self.db, "aggregation_stability")
 
         if not reports:
@@ -111,9 +126,15 @@ class AggregationStabilityEngine:
                 r["fact_table"],
                 r["dimension_table"],
                 r["measure_column"],
-                r["fine_grain_sum"],
-                r["aggregated_sum"],
-                r["delta"],
+                r["fine_sum"],
+                r["agg_sum"],
+                r["delta_sum"],
+                r["fine_count"],
+                r["agg_count"],
+                r["delta_count"],
+                r["fine_avg"],
+                r["agg_avg"],
+                r["delta_avg"],
                 r["is_stable"],
                 r["reason"],
             ]
@@ -129,9 +150,15 @@ class AggregationStabilityEngine:
                 "fact_table",
                 "dimension_table",
                 "measure_column",
-                "fine_grain_sum",
-                "aggregated_sum",
-                "delta",
+                "fine_sum",
+                "agg_sum",
+                "delta_sum",
+                "fine_count",
+                "agg_count",
+                "delta_count",
+                "fine_avg",
+                "agg_avg",
+                "delta_avg",
                 "is_stable",
                 "reason",
             ],
@@ -143,4 +170,4 @@ class AggregationStabilityEngine:
             if report["is_stable"]:
                 logger.info(f'OK    | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | Delta : 0')
             else:
-                logger.info(f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | {report["reason"]} (Fin: {report["fine_grain_sum"]} vs Agg: {report["aggregated_sum"]})')
+                logger.info(f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | {report["reason"]} (Fin: {report["fine_sum"]} vs Agg: {report["agg_sum"]})')
