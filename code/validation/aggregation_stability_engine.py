@@ -67,9 +67,9 @@ class AggregationStabilityEngine:
             is_stable = is_stable_sum and is_stable_count and is_stable_avg
 
             reasons = []
-            if not is_stable_sum: reasons.append("Instabilité de la SOMME")
-            if not is_stable_count: reasons.append("Instabilité du COUNT")
-            if not is_stable_avg: reasons.append("Instabilité de la MOYENNE")
+            if not is_stable_sum: reasons.append("SUM instability")
+            if not is_stable_count: reasons.append("COUNT instability")
+            if not is_stable_avg: reasons.append("AVERAGE instability")
             reason_str = ", ".join(reasons) if not is_stable else "Stable"
 
             reports.append({
