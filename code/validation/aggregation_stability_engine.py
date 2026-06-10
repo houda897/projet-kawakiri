@@ -170,4 +170,4 @@ class AggregationStabilityEngine:
             if report["is_stable"]:
                 logger.info(f'OK    | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | Delta : 0')
             else:
-                logger.info(f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | {report["reason"]} (Fin: {report["fine_grain_sum"]} vs Agg: {report["aggregated_sum"]})')
+                logger.info(f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | {report["reason"]} (Fin: {report["fine_sum"]} vs Agg: {report["agg_sum"]})')
