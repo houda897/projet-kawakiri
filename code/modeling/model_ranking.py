@@ -1,6 +1,7 @@
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
+from core.schema import q_ident
 from modeling.decision_model import DecisionModelCandidate, DecisionModelType
 from config.scoring import PARSIMONY_WEIGHTS
 
@@ -39,7 +40,8 @@ class ModelRanking:
         Calculate scores for each candidate, store them in the metadata table, and return a sorted list of (candidate, score) tuples.
         '''
         if not candidates:
-            logger.warning("Aucun candidat fourni pour le ranking.")
+            clear_metadata_table(self.db, "decision_model_scores")
+            logger.warning("No model candidate provided for ranking.")
             return []
 
         scored_data = []
@@ -53,7 +55,7 @@ class ModelRanking:
             (candidate.model_id, score) for candidate, score in scored_data
         ])
         
-        logger.info("Évaluation et sauvegarde terminées pour %d modèles.", len(scored_data))
+        logger.info("Model ranking stored for %d candidates.", len(scored_data))
         return scored_data
 
     def _store_scores(self, scores_data: list[tuple[str, float]]) -> None:
@@ -66,7 +68,7 @@ class ModelRanking:
         ]
 
         self.db.insert(
-            f"{META_DB}.decision_model_scores",
+            f"{q_ident(META_DB)}.decision_model_scores",
             rows,
             column_names=["database_name", "model_id", "parsimony_score"]
         )
@@ -77,6 +79,6 @@ class ModelRanking:
         logger.info("=== MODELS RANKING ===")
         for i, (candidate, score) in enumerate(scored_candidates, 1):
             logger.info(
-                "Rang %d | Score: %s | Type: %s | ID: %s",
+                "Rank %d | score=%s | type=%s | id=%s",
                 i, score, candidate.model_type.value, candidate.model_id
             )
