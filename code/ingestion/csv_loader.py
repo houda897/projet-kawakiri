@@ -14,9 +14,7 @@ from core.schema import q_ident
 
 logger = get_logger(__name__)
 
-NULL_TOKENS: frozenset[str] = frozenset(
-    {"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"}
-)
+NULL_TOKENS: frozenset[str] = frozenset({"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"})
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
 
@@ -184,9 +182,7 @@ class CsvIngestionEngine:
         sample_size: int | None,
     ) -> tuple[list[str], list[dict[str, str | None]]]:
         original_headers = self.read_original_headers(path, delimiter)
-        headers = self.dedupe_names(
-            [self.clean_identifier(header) for header in original_headers]
-        )
+        headers = self.dedupe_names([self.clean_identifier(header) for header in original_headers])
 
         rows = []
         for index, (_, row_data) in enumerate(self.iter_csv_rows(path, delimiter, headers)):
@@ -327,10 +323,7 @@ class CsvIngestionEngine:
         table: str,
         columns: list[DetectedColumn],
     ) -> str:
-        column_lines = [
-            f"    {q_ident(column.name)} {column.detected_type}"
-            for column in columns
-        ]
+        column_lines = [f"    {q_ident(column.name)} {column.detected_type}" for column in columns]
         columns_sql = ",\n".join(column_lines)
 
         return f"""
@@ -365,10 +358,7 @@ ORDER BY tuple()
                 continue
 
             batch.append(
-                [
-                    self.cast_value(row_data[column.name], column, line_number)
-                    for column in columns
-                ]
+                [self.cast_value(row_data[column.name], column, line_number) for column in columns]
             )
 
             if len(batch) >= BATCH_SIZE:
@@ -409,10 +399,13 @@ ORDER BY tuple()
 
             for line_number, row in enumerate(reader, start=2):
                 self.check_malformed_row(row, path, line_number, delimiter)
-                yield line_number, {
-                    column_names[index]: row.get(original_headers[index])
-                    for index in range(len(column_names))
-                }
+                yield (
+                    line_number,
+                    {
+                        column_names[index]: row.get(original_headers[index])
+                        for index in range(len(column_names))
+                    },
+                )
 
     @staticmethod
     def read_original_headers(path: Path, delimiter: str) -> list[str]:
@@ -437,8 +430,7 @@ ORDER BY tuple()
 
         for delimiter in DELIMITERS:
             column_counts = [
-                len(next(csv.reader([line], delimiter=delimiter)))
-                for line in lines[:10]
+                len(next(csv.reader([line], delimiter=delimiter))) for line in lines[:10]
             ]
             common_count = max(set(column_counts), key=column_counts.count)
             stable_lines = column_counts.count(common_count)
@@ -469,16 +461,18 @@ ORDER BY tuple()
     def log_ingestion_result(self, result: IngestionResult) -> None:
         self.db.insert(
             f"{META_DB}.ingestion_runs",
-            [[
-                result.source_path,
-                result.target_database,
-                result.target_table,
-                result.detected_delimiter,
-                result.row_count,
-                result.column_count,
-                result.status,
-                result.error_message,
-            ]],
+            [
+                [
+                    result.source_path,
+                    result.target_database,
+                    result.target_table,
+                    result.detected_delimiter,
+                    result.row_count,
+                    result.column_count,
+                    result.status,
+                    result.error_message,
+                ]
+            ],
             column_names=[
                 "source_path",
                 "target_database",
@@ -529,15 +523,17 @@ ORDER BY tuple()
     ) -> None:
         self.db.insert(
             f"{META_DB}.ingestion_sources",
-            [[
-                result.source_path,
-                result.target_database,
-                result.target_table,
-                result.detected_delimiter,
-                sample_check.sample_rows_checked,
-                sample_check.needs_human_review,
-                sample_check.review_reason,
-            ]],
+            [
+                [
+                    result.source_path,
+                    result.target_database,
+                    result.target_table,
+                    result.detected_delimiter,
+                    sample_check.sample_rows_checked,
+                    sample_check.needs_human_review,
+                    sample_check.review_reason,
+                ]
+            ],
             column_names=[
                 "source_path",
                 "target_database",
@@ -575,9 +571,7 @@ ORDER BY tuple()
     def table_name_from_folder_file(cls, folder: Path, csv_file: Path) -> str:
         relative_path = csv_file.relative_to(folder)
         table_source_name = (
-            relative_path.parts[0]
-            if len(relative_path.parts) > 1
-            else csv_file.stem
+            relative_path.parts[0] if len(relative_path.parts) > 1 else csv_file.stem
         )
         return cls.clean_identifier(table_source_name)
 

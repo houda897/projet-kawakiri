@@ -16,6 +16,7 @@ def test_is_numeric_type_detects_numeric_types() -> None:
 def test_ensure_meta_schema_cree_la_table_column_stats() -> None:
     """La table column_stats doit être créée dans ensure_meta_schema, pas dans stats_computing."""
     from core.meta import ensure_meta_schema
+
     db = MagicMock()
 
     ensure_meta_schema(db)

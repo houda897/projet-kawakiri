@@ -170,4 +170,3 @@ class ProfileEngine:
 
         self.insert_column_profiles(profiles)
         return profiles
-

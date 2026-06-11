@@ -6,6 +6,7 @@ from typing import Protocol
 from core.clickhouse_manager import META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
+
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -14,9 +15,8 @@ logger = get_logger(__name__)
 class SemanticEdgeEnricher(Protocol):
     def enrich_edges_with_semantics(
         self,
-        edges: list["AdjacencyEdge"],
-    ) -> list["AdjacencyEdge"]:
-        ...
+        edges: list[AdjacencyEdge],
+    ) -> list[AdjacencyEdge]: ...
 
 
 @dataclass
@@ -73,11 +73,7 @@ class AdjacencyMatrixEngine:
 
     @staticmethod
     def split_columns(columns: str) -> tuple[str, ...]:
-        return tuple(
-            column.strip()
-            for column in columns.split(",")
-            if column.strip()
-        )
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
 
     def build_matrix(
         self,
@@ -152,7 +148,7 @@ class AdjacencyMatrixEngine:
         for source_table, targets in matrix.items():
             for target_table, score in targets.items():
                 logger.info("%s -> %s | score=%s", source_table, target_table, score)
-    
+
     @staticmethod
     def print_binary_matrix(matrix: dict[str, dict[str, float]]) -> None:
         """
@@ -167,17 +163,10 @@ class AdjacencyMatrixEngine:
 
         tables = sorted(
             set(matrix.keys())
-            | {
-                target_table
-                for targets in matrix.values()
-                for target_table in targets.keys()
-            }
+            | {target_table for targets in matrix.values() for target_table in targets.keys()}
         )
 
-        aliases = {
-            table: f"T{index + 1}"
-            for index, table in enumerate(tables)
-        }
+        aliases = {table: f"T{index + 1}" for index, table in enumerate(tables)}
 
         alias_width = max(5, max(len(alias) for alias in aliases.values()) + 2)
 
@@ -214,10 +203,12 @@ class AdjacencyMatrixEngine:
 
     @staticmethod
     def print_edges(edges: list[AdjacencyEdge]) -> None:
-        '''Print the edges with their evidence label'''
+        """Print the edges with their evidence label"""
 
         for edge in edges:
             src = f"{edge.source_table}.{edge.source_columns[0]}"
             tgt = f"{edge.target_table}.{edge.target_columns[0]}"
 
-            logger.info(f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {edge.evidence}")
+            logger.info(
+                f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {edge.evidence}"
+            )

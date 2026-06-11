@@ -61,11 +61,7 @@ class IdentifiabilityEngine:
         Raises ValueError if the sum deviates by more than 0.0001, which would
         silently bias every identifiability score computed by this engine.
         """
-        total = (
-            self.weight_uniqueness
-            + self.weight_entropy
-            + self.weight_completeness
-        )
+        total = self.weight_uniqueness + self.weight_entropy + self.weight_completeness
 
         if not 0.9999 <= total <= 1.0001:
             raise ValueError(

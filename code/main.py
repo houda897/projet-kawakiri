@@ -10,9 +10,13 @@ from inference.primary_key import PrimaryKeyEngine
 from inference.table_role import TableRoleEngine
 from ingestion.csv_loader import CsvIngestionEngine
 from modeling.candidate_builder import DecisionModelCandidateBuilder
+from modeling.model_ranking import ModelRanking
 from profiling.basic_profile import ProfileEngine
+from reporting.certification_report import CertificationReportExporter
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from validation.granularity_validator import GranularityValidator
+from validation.model_certification import ModelCertificationEngine
 from validation.structural_validator import StructuralValidator
 from modeling.model_ranking import ModelRanking
 from colorama import Fore,Style,init
@@ -119,7 +123,6 @@ def run_join_inference() -> None:
     join_engine.store_candidates(candidates)
 
 
-
 def run_adjacency() -> None:
     db = get_manager()
 
@@ -157,7 +160,6 @@ def run_adjacency() -> None:
     adjacency_engine.print_binary_matrix(matrix)
 
 
-
 def run_table_roles() -> None:
     db = get_manager()
     ensure_meta_schema(db)
@@ -191,6 +193,21 @@ def run_model_candidate_building() -> None:
     ranking_engine.print_ranked_models(ranked_candidates)
 
 
+def run_model_ranking() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+
+    builder = DecisionModelCandidateBuilder(db)
+    candidates = builder.load_candidates()
+
+    if not candidates:
+        raise ValueError("No decision model candidates found. Run build-model-candidates first.")
+
+    ranking = ModelRanking(db)
+    scored_candidates = ranking.rank_and_store(candidates)
+    ranking.print_ranked_models(scored_candidates)
+
+
 def run_structural_validation() -> None:
     db = get_manager()
     ensure_meta_schema(db)
@@ -198,6 +215,72 @@ def run_structural_validation() -> None:
     results = validator.validate_stored_candidates()
     validator.store_results(results)
     validator.print_results(results)
+
+
+def run_granularity_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    validator = GranularityValidator(db)
+    results = validator.validate_stored_candidates()
+    validator.store_results(results)
+    validator.print_results(results)
+
+
+def run_model_certification() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    engine = ModelCertificationEngine(db)
+    results = engine.certify_stored_candidates()
+    engine.store_results(results)
+    engine.print_results(results)
+
+
+def run_certification_report_export(path: str) -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    exporter = CertificationReportExporter(db)
+    exporter.write_json(path)
+    logger.info("Certification report exported: %s", path)
+
+
+def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
+    """
+    Run the full available pipeline from CSV ingestion to certification report.
+
+    Semantic homogeneity and aggregation stability are intentionally not called
+    here yet because these validators are owned by separate work in progress.
+    """
+
+    steps = [
+        ("ingest-folder", lambda: run_folder_ingestion(path)),
+        ("profile-basic", run_basic_profile),
+        ("score-identifiability", run_identifiability),
+        ("infer-pk", run_pk_inference),
+        ("infer-joins", run_join_inference),
+        ("build-adjacency", run_adjacency),
+        ("infer-table-roles", run_table_roles),
+        ("build-model-candidates", run_model_candidate_building),
+        ("rank-models", run_model_ranking),
+        ("validate-structure", run_structural_validation),
+        ("validate-granularity", run_granularity_validation),
+        ("certify-models", run_model_certification),
+    ]
+
+    for step_name, step in steps:
+        logger.info("=== %s ===", step_name)
+        step()
+
+    if skip_sql_views:
+        logger.info("=== generate-sql-views skipped ===")
+    else:
+        logger.info("=== generate-sql-views ===")
+        try:
+            run_sql_view_generation()
+        except ValueError as exc:
+            logger.warning("SQL view generation skipped: %s", exc)
+
+    logger.info("=== export-certification-report ===")
+    run_certification_report_export(report_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -210,18 +293,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument("path", help="CSV file path")
     ingest_parser.add_argument("--table", help="Target table name")
-    ingest_parser.set_defaults(
-        handler=lambda args: run_csv_ingestion(args.path, args.table)
-    )
+    ingest_parser.set_defaults(handler=lambda args: run_csv_ingestion(args.path, args.table))
 
     folder_parser = subparsers.add_parser(
         "ingest-folder",
         help="Import all CSV files from a folder",
     )
     folder_parser.add_argument("path", help="Folder path")
-    folder_parser.set_defaults(
-        handler=lambda args: run_folder_ingestion(args.path)
-    )
+    folder_parser.set_defaults(handler=lambda args: run_folder_ingestion(args.path))
 
     profile_parser = subparsers.add_parser(
         "profile-basic",
@@ -286,16 +365,60 @@ def build_parser() -> argparse.ArgumentParser:
         "build-model-candidates",
         help="Build plausible decision model candidates from confirmed edges and inferred table roles",
     )
-    model_candidates_parser.set_defaults(
-        handler=lambda args: run_model_candidate_building()
+    model_candidates_parser.set_defaults(handler=lambda args: run_model_candidate_building())
+
+    model_ranking_parser = subparsers.add_parser(
+        "rank-models",
+        help="Rank stored decision model candidates by parsimony",
     )
+    model_ranking_parser.set_defaults(handler=lambda args: run_model_ranking())
 
     structural_validation_parser = subparsers.add_parser(
         "validate-structure",
         help="Validate stored decision model candidates with structural rules",
     )
-    structural_validation_parser.set_defaults(
-        handler=lambda args: run_structural_validation()
+    structural_validation_parser.set_defaults(handler=lambda args: run_structural_validation())
+
+    granularity_validation_parser = subparsers.add_parser(
+        "validate-granularity",
+        help="Validate deterministic fact granularity for stored model candidates",
+    )
+    granularity_validation_parser.set_defaults(handler=lambda args: run_granularity_validation())
+
+    model_certification_parser = subparsers.add_parser(
+        "certify-models",
+        help="Certify stored decision model candidates from ranking and validation results",
+    )
+    model_certification_parser.set_defaults(handler=lambda args: run_model_certification())
+
+    report_parser = subparsers.add_parser(
+        "export-certification-report",
+        help="Export final model certification results as JSON",
+    )
+    report_parser.add_argument("path", help="Output JSON file path")
+    report_parser.set_defaults(handler=lambda args: run_certification_report_export(args.path))
+
+    run_all_parser = subparsers.add_parser(
+        "run-all",
+        help="Run the full available pipeline and export a certification report",
+    )
+    run_all_parser.add_argument("path", help="Folder path containing CSV files")
+    run_all_parser.add_argument(
+        "--report",
+        default="report.json",
+        help="Output JSON report path",
+    )
+    run_all_parser.add_argument(
+        "--skip-sql-views",
+        action="store_true",
+        help="Skip SQL view generation",
+    )
+    run_all_parser.set_defaults(
+        handler=lambda args: run_all(
+            path=args.path,
+            report_path=args.report,
+            skip_sql_views=args.skip_sql_views,
+        )
     )
 
     return parser

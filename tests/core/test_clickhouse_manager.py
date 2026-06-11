@@ -2,7 +2,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from core.clickhouse_manager import clickhouse_manager
 
 

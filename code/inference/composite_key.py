@@ -85,18 +85,15 @@ class CompositeKeyEngine:
                 logger.info("Composite key found for %s: %s", table, combo_names)
 
                 cleaned_combo = list(current_combo)
-                
-                columns_to_test = sorted(
-                    current_combo, 
-                    key=lambda col: col.identifiability_score
-                )
-                
+
+                columns_to_test = sorted(current_combo, key=lambda col: col.identifiability_score)
+
                 for col_to_test in columns_to_test:
                     test_combo = [c for c in cleaned_combo if c != col_to_test]
-                    
+
                     if len(test_combo) >= 2:
                         test_names = [c.column_name for c in test_combo]
-                        
+
                         if check_functional_dependency(database_name, table, test_names, self.db):
                             cleaned_combo = test_combo
 
@@ -159,9 +156,10 @@ class CompositeKeyEngine:
         columns = []
 
         for row in rows:
-            confidence = round(PK_WEIGHTS["uniqueness"] * row[6]
-    + PK_WEIGHTS["identifiability"] * row[7],
-    6,)
+            confidence = round(
+                PK_WEIGHTS["uniqueness"] * row[6] + PK_WEIGHTS["identifiability"] * row[7],
+                6,
+            )
 
             columns.append(
                 PrimaryKeyCandidate(
