@@ -51,6 +51,7 @@ class TestModelRanking(unittest.TestCase):
     def test_rank_and_store(self, mock_clear):
         """Test that the function correctly sorts the candidates and calls the database insertion"""
         cand1 = DummyCandidate("model_1", DecisionModelType.STAR, ["F1"], ["D1"], 2, 5, 1)
+        cand2 = DummyCandidate("model_2", DecisionModelType.STAR, ["F1"], ["D1", "D2", "D3"], 4, 5, 5)
 
         ranked = self.ranking_engine.rank_and_store([cand1, cand2]) # type: ignore
 
