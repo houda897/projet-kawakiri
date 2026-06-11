@@ -343,15 +343,28 @@ def ensure_meta_schema(client) -> None:
         fact_table String,
         dimension_table String,
         measure_column String,
+        group_column String,
+
         fine_sum Float64,
         agg_sum Float64,
         delta_sum Float64,
+
         fine_count UInt64,
         agg_count UInt64,
-        delta_count Int64,
+        delta_count UInt64,
+
         fine_avg Float64,
         agg_avg Float64,
         delta_avg Float64,
+
+        fine_min Float64,
+        agg_min Float64,
+        delta_min Float64,
+
+        fine_max Float64,
+        agg_max Float64,
+        delta_max Float64,
+
         is_stable Bool,
         reason String,
         created_at DateTime DEFAULT now()
