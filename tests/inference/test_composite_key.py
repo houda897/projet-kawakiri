@@ -1,9 +1,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from inference.composite_key import CompositeKeyEngine  # Ajuste l'import
+from inference.composite_key import CompositeKeyColumnEvidence, CompositeKeyEngine
 from inference.key_ranking import RankedKeyCandidate
-from inference.primary_key import PrimaryKeyCandidate
 
 
 @pytest.fixture
@@ -20,7 +19,7 @@ def composite_engine(mock_db):
 def dummy_columns():
     """Generate a fake list of columns returned by ClickHouse for composite key search."""
     return [
-        PrimaryKeyCandidate(
+        CompositeKeyColumnEvidence(
             database_name="TestDB",
             table_name="FactSales",
             column_name="OrderNumber",
@@ -30,9 +29,8 @@ def dummy_columns():
             uniqueness_ratio=0.5,
             identifiability_score=0.8,
             confidence=0.9,
-            reason="test",
         ),
-        PrimaryKeyCandidate(
+        CompositeKeyColumnEvidence(
             database_name="TestDB",
             table_name="FactSales",
             column_name="ProductKey",
@@ -42,9 +40,8 @@ def dummy_columns():
             uniqueness_ratio=0.1,
             identifiability_score=0.9,
             confidence=0.8,
-            reason="test",
         ),
-        PrimaryKeyCandidate(
+        CompositeKeyColumnEvidence(
             database_name="TestDB",
             table_name="FactSales",
             column_name="OrderDate",
@@ -54,7 +51,6 @@ def dummy_columns():
             uniqueness_ratio=0.05,
             identifiability_score=0.4,
             confidence=0.4,
-            reason="test",
         ),
     ]
 
@@ -92,7 +88,7 @@ def test_generate_composite_candidates_no_columns(composite_engine):
     """'Test the behavior if a table has fewer than 2 candidate columns (composite key impossible)."""
     composite_engine.load_columns_for_composite_search = MagicMock(
         return_value=[
-            PrimaryKeyCandidate(
+            CompositeKeyColumnEvidence(
                 database_name="TestDB",
                 table_name="TinyTable",
                 column_name="OnlyCol",
@@ -102,7 +98,6 @@ def test_generate_composite_candidates_no_columns(composite_engine):
                 uniqueness_ratio=1.0,
                 identifiability_score=1.0,
                 confidence=1.0,
-                reason="",
             )
         ]
     )

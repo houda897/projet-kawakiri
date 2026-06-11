@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 
@@ -42,7 +42,7 @@ class AdjacencyMatrixEngine:
     Build a table-level adjacency matrix from physical join evidence.
     """
 
-    def __init__(self, db: clickhouse_manager, semantic_engine: SemanticEdgeEnricher):
+    def __init__(self, db: ClickHouseManager, semantic_engine: SemanticEdgeEnricher):
         self.db = db
         self.semantic_engine = semantic_engine
 

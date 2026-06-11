@@ -19,7 +19,7 @@ CH_DB = os.getenv("CH_DATABASE", "lab_db")
 META_DB = os.getenv("META_DB", "lab_meta")
 
 
-class clickhouse_manager:
+class ClickHouseManager:
     """
     Central access point to ClickHouse.
 
@@ -90,7 +90,7 @@ class clickhouse_manager:
         return self.meta_database
 
     @classmethod
-    def get_instance(cls) -> "clickhouse_manager":
+    def get_instance(cls) -> "ClickHouseManager":
         """Return the shared singleton instance, creating it on first call."""
         if cls._instance is None:
             cls._instance = cls()
@@ -98,6 +98,6 @@ class clickhouse_manager:
         return cls._instance
 
 
-def get_manager() -> clickhouse_manager:
-    """Module-level shorthand for clickhouse_manager.get_instance()."""
-    return clickhouse_manager.get_instance()
+def get_manager() -> ClickHouseManager:
+    """Module-level shorthand for ClickHouseManager.get_instance()."""
+    return ClickHouseManager.get_instance()

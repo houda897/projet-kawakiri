@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.scoring import IDENTIFIABILITY_THRESHOLDS, IDENTIFIABILITY_WEIGHTS
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.schema import q_ident
 
@@ -36,7 +36,7 @@ class IdentifiabilityEngine:
 
     def __init__(
         self,
-        db: clickhouse_manager,
+        db: ClickHouseManager,
         weight_uniqueness: float = IDENTIFIABILITY_WEIGHTS["uniqueness"],
         weight_entropy: float = IDENTIFIABILITY_WEIGHTS["entropy"],
         weight_completeness: float = IDENTIFIABILITY_WEIGHTS["completeness"],

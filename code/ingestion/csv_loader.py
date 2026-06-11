@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from config.scoring import INGESTION_SETTINGS
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
 from core.schema import q_ident
@@ -56,7 +56,7 @@ class CsvIngestionEngine:
     Import CSV files into ClickHouse and keep simple ingestion metadata.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def import_csv_to_clickhouse(

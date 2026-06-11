@@ -1,24 +1,24 @@
 import unittest
 from unittest.mock import MagicMock
 
-from semantic.semantic_homogeneity_engine import SemanticHomogeneityEngine
+from validation.semantic_homogeneity_validator import SemanticHomogeneityValidator
 
 
-class TestSemanticHomogeneityEngine(unittest.TestCase):
+class TestSemanticHomogeneityValidator(unittest.TestCase):
     def setUp(self):
         self.mock_db = MagicMock()
-        self.engine = SemanticHomogeneityEngine(self.mock_db)
+        self.validator = SemanticHomogeneityValidator(self.mock_db)
 
     def test_is_key_like_column(self):
         """Test key detection"""
-        self.assertTrue(self.engine.is_key_like_column("customer_id"))
-        self.assertTrue(self.engine.is_key_like_column("ProductKey"))
-        self.assertTrue(self.engine.is_key_like_column("ticket_no"))
-        self.assertTrue(self.engine.is_key_like_column("status_code"))
+        self.assertTrue(self.validator.is_key_like_column("customer_id"))
+        self.assertTrue(self.validator.is_key_like_column("ProductKey"))
+        self.assertTrue(self.validator.is_key_like_column("ticket_no"))
+        self.assertTrue(self.validator.is_key_like_column("status_code"))
 
-        self.assertFalse(self.engine.is_key_like_column("order_quantity"))
-        self.assertFalse(self.engine.is_key_like_column("CustomerName"))
-        self.assertFalse(self.engine.is_key_like_column("created_date"))
+        self.assertFalse(self.validator.is_key_like_column("order_quantity"))
+        self.assertFalse(self.validator.is_key_like_column("CustomerName"))
+        self.assertFalse(self.validator.is_key_like_column("created_date"))
 
     def test_check_fact_homogeneity_valid(self):
         """Test a valid fact (only keys, dates and measurements)"""
@@ -30,9 +30,9 @@ class TestSemanticHomogeneityEngine(unittest.TestCase):
             ("good_measure", "Int32", 0.8, 0.9, 0.0, 0.1),
         ]
         self.mock_db.query.return_value = mock_result
-        self.engine.threshold = 0.85
+        self.validator.threshold = 0.85
 
-        report = self.engine.check_fact_homogeneity("fact_sales")
+        report = self.validator.check_fact_homogeneity("fact_sales")
 
         self.assertTrue(report["is_valid"])
         self.assertEqual(report["issue_count"], 0)
@@ -46,9 +46,9 @@ class TestSemanticHomogeneityEngine(unittest.TestCase):
             ("bad_flag", "Int32", 0.0, 0.0, 0.0, 0.0),
         ]
         self.mock_db.query.return_value = mock_result
-        self.engine.threshold = 0.5
+        self.validator.threshold = 0.5
 
-        report = self.engine.check_fact_homogeneity("fact_bad")
+        report = self.validator.check_fact_homogeneity("fact_bad")
 
         self.assertFalse(report["is_valid"])
         self.assertEqual(report["issue_count"], 2)

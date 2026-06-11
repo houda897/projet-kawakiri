@@ -1,5 +1,4 @@
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
-from core.schema import q_ident
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from modeling.decision_model import DecisionModelCandidate
 from core.meta import clear_metadata_table
@@ -7,7 +6,7 @@ from core.meta import clear_metadata_table
 logger = get_logger(__name__)
 
 class AggregationStabilityEngine:
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.epsilon = 0.001 
 
