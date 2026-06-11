@@ -1,66 +1,234 @@
-# Kawakiri 
+# Kawakiri
 
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-yellow.svg)
 
-**Kawakiri** is an Open Source *Structure Data Science* library developed in collaboration with the AMSE laboratory. It allows for the automatic inference of decisional models (Facts / Dimensions) from raw and undocumented data sources (CSV/SQL).
+**Kawakiri** is an open-source reverse-engineering library for discovering decision
+models from undocumented data sources. It ingests raw CSV files into ClickHouse,
+profiles the data, infers keys and joins, classifies tables as facts or dimensions,
+builds candidate decision models, validates them with structural rules, and exports a
+final certification report.
+
+The long-term goal is to support a scientific open-source deliverable for JOSS
+publication by combining reverse engineering, structural data science, and formal
+decision-model validation.
 
 ## Project Goals
 
-1. **Reverse Engineering**: Discover the structure of unknown sources and massively ingest them into ClickHouse.
-2. **Structure Data Science**: Implement statistical compliance tests (Iron Rules, Entropy) to certify a decisional model.
-3. **Open Source**: Aim for a scientific publication in JOSS (Journal of Open Source Software).
+1. **Reverse Engineering**: discover table structure from unknown CSV or SQL sources.
+2. **Decision Modeling**: infer facts, dimensions, joins, stars, snowflakes, and constellations.
+3. **Model Validation**: apply structural rules such as referential integrity, topology checks,
+   deterministic granularity, semantic homogeneity, and aggregation stability.
+4. **Certification**: compile validation results into a final confidence report for each model.
+
+## Scientific Rationale
+
+Kawakiri starts from a raw set of tables without documentation. Several decision
+structures can look plausible on noisy data, so the project does not stop at discovering
+one graph. It generates candidate models, scores them, and invalidates weak structures
+with explicit rules.
+
+The core idea is:
+
+```text
+Raw tables
+-> statistical profiling
+-> key and join inference
+-> adjacency graph
+-> fact/dimension roles
+-> candidate models
+-> validation rules
+-> certification report
+```
+
+The current validation layer focuses on:
+
+- **referential integrity**: detect orphan rows between fact and dimension tables;
+- **topology**: reject self-loops, problematic cycles, and invalid fact-to-fact links;
+- **deterministic granularity**: verify that fact rows are uniquely identified by their grain;
+- **model certification**: combine ranking and validation results into a final status.
+
+Semantic homogeneity and aggregation stability are part of the validation roadmap and are
+implemented as dedicated engines so they can be integrated into the final certification flow.
 
 ## Architecture
 
-The project relies on **ClickHouse**'s computing power to execute heavy statistical calculations (Entropy, Cardinality, Nullity Ratio) without saturating local memory.
+The project is organized around small engine classes. Each engine owns one step of the
+pipeline and persists its reusable results in ClickHouse metadata tables.
 
-The code is structured around object-oriented `Engines`:
-- `CsvIngestionEngine`: Separator detection, type inference, and batch ingestion.
-- `ProfileEngine` & `EntropyEngine`: Calculation of statistical metrics.
-- `PrimaryKeyEngine` & `DimensionEngine`: Inference of decisional structures.
-- `JoinEngine`: Physical testing engine for joins.
+| Layer | Main classes | Responsibility |
+| --- | --- | --- |
+| Ingestion | `CsvIngestionEngine` | Detect delimiters and types, create tables, insert CSV rows |
+| Profiling | `ProfileEngine` | Store base column profiles and launch advanced statistics |
+| Statistics | `IdentifiabilityEngine` | Score how suitable columns are as identifiers |
+| Inference | `PrimaryKeyEngine`, `JoinEngine`, `AdjacencyMatrixEngine`, `TableRoleEngine` | Infer keys, joins, graph edges, and fact/dimension roles |
+| Modeling | `DecisionModelCandidateBuilder`, `ModelRanking` | Build and rank STAR, SNOWFLAKE, and CONSTELLATION candidates |
+| Validation | `StructuralValidator`, `GranularityValidator`, `ModelCertificationEngine` | Validate candidate models and produce certification results |
+| Generation | `SQLViewGenerator` | Generate SQL views from the best certified model |
+| Reporting | `CertificationReportExporter` | Export the final certification report as JSON |
 
 ## Installation
 
-Prerequisites: 
+Prerequisites:
+
 - Python 3.10+
-- A ClickHouse instance running locally or remotely.
+- A running ClickHouse instance
+
+Install the project:
 
 ```bash
-# Create a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -e .
+```
 
-# Install the library (development mode)
+For development, install the optional development dependencies:
+
+```bash
 pip install -e ".[dev]"
 ```
 
+The `pyproject.toml` file contains the runtime dependencies:
+
+- `clickhouse-connect`
+- `python-dotenv`
+- `rapidfuzz`
+- `colorama`
+
+It also contains development tools such as `pytest`, `pytest-cov`, `black`, `ruff`,
+`mkdocs`, and `mkdocs-material`.
+
 ## Configuration
 
-Create a `.env` file at the root (never commit it to Git, base it on `.env.example`):
+Create a `.env` file at the project root. Do not commit this file.
 
 ```env
-CH_HOST=127.0.0.1
-CH_PORT=11123
-CH_DATABASE=lab_db
-CH_USER=lab_usr_admin
+CH_HOST=localhost
+CH_PORT=your_port
+CH_DATABASE=your_database
+CH_USER=your_user
 CH_PASSWORD=your_password
 ```
 
-## Usage
+The metadata schema is created automatically by the pipeline when needed.
 
-Kawakiri can be used via its CLI:
+## Quick Start
+
+Prepare a folder containing the CSV files to analyze. Kawakiri expects one table per
+CSV file, and the folder path is provided by the user.
+
+Run the full available pipeline:
 
 ```bash
-python code/main.py --help
-
-# Ingest a CSV
-python code/main.py ingest-csv ./data/sales.csv --table sales
-
-# Profile the database
-python code/main.py profile-basic
-
-# Infer primary keys
-python code/main.py infer-pk
+kawakiri run-all path/to/csv-folder --report report.json
 ```
+
+This command executes:
+
+```text
+ingest-folder
+profile-basic
+score-identifiability
+infer-pk
+infer-joins
+build-adjacency
+infer-table-roles
+build-model-candidates
+rank-models
+validate-structure
+validate-granularity
+certify-models
+generate-sql-views
+export-certification-report
+```
+
+If all certified models are invalid, SQL view generation is skipped with a warning, but the
+JSON certification report is still exported.
+
+To run the full pipeline without creating SQL views:
+
+```bash
+kawakiri run-all path/to/csv-folder --report report.json --skip-sql-views
+```
+
+## Step-by-Step Usage
+
+Each stage can also be executed independently:
+
+```bash
+kawakiri ingest-folder path/to/csv-folder
+kawakiri profile-basic
+kawakiri score-identifiability
+kawakiri infer-pk
+kawakiri infer-joins
+kawakiri build-adjacency
+kawakiri infer-table-roles
+kawakiri build-model-candidates
+kawakiri rank-models
+kawakiri validate-structure
+kawakiri validate-granularity
+kawakiri certify-models
+kawakiri generate-sql-views
+kawakiri export-certification-report report.json
+```
+
+You can inspect all commands with:
+
+```bash
+kawakiri --help
+```
+
+## Certification Report
+
+The report exporter writes a JSON file containing:
+
+- the target database name;
+- the generated timestamp;
+- the best model according to certification and ranking;
+- all certified models;
+- passed, failed, missing, and warning rules;
+- detailed validation issues.
+
+Example:
+
+```bash
+kawakiri export-certification-report report.json
+```
+
+## Development Checks
+
+Before opening a pull request, run:
+
+```bash
+ruff check code tests
+ruff format --check code tests
+pytest -q
+```
+
+To format the project:
+
+```bash
+ruff format code tests
+```
+
+## Repository Hygiene
+
+Do not commit local datasets, generated reports, cache files, or environment files.
+
+Common files to keep out of commits:
+
+```text
+.env
+report.json
+__pycache__/
+.pytest_cache/
+local_data/
+```
+
+## Roadmap
+
+- Complete semantic homogeneity validation for fact/dimension separation.
+- Complete aggregation stability validation across dimensional levels.
+- Connect all validation engines into the final certification score.
+- Add more integration tests around the full pipeline.
+- Prepare the JOSS material: `paper.md`, `CITATION.cff`, license, and contributor guide.
