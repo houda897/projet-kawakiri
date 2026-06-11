@@ -336,7 +336,7 @@ def ensure_meta_schema(client) -> None:
 
     client.command(
         f"""
-    CREATE TABLE IF NOT EXISTS meta.aggregation_stability
+    CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.aggregation_stability
     (
         database_name String,
         model_id String,
