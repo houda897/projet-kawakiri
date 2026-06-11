@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import (
     clear_metadata_table,
@@ -25,7 +25,7 @@ class DecisionModelCandidateBuilder:
     Build plausible decision-model candidates from detected roles and confirmed edges.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def build_candidates(self) -> list[DecisionModelCandidate]:

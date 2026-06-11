@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
@@ -27,7 +27,7 @@ class GranularityValidator:
     Validate that each fact row is identified by its dimension keys.
     """
 
-    def __init__(self, db: clickhouse_manager, database: str = CH_DB):
+    def __init__(self, db: ClickHouseManager, database: str = CH_DB):
         self.db = db
         self.database = database
         self.candidate_builder = DecisionModelCandidateBuilder(db)
