@@ -11,12 +11,24 @@ class AggregationStabilityEngine:
         self.db = db
         self.epsilon = 0.001 
 
-    def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
-        '''
-        Verifies that aggregating a measure via the model's dimensions does not cause any data loss or duplication
-        Test on sum, coutn and avg
-        '''
+    def _is_key_like_column(self, column_name: str) -> bool:
+        """Detects if a column has a typical key or identifier name"""
+        name = column_name.lower()
+        return (
+            name.endswith("id")
+            or name.endswith("_id")
+            or name.endswith("key")
+            or name.endswith("_key")
+            or name.endswith("no")
+            or name.endswith("_no")
+            or "code" in name
+        )
 
+    def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
+        """
+        Verifies that the join with the model dimensions does not cause data loss or duplication (fan-out) on SUM, COUNT, and AVG. 
+        Natively handles composite primary keys
+        """
         reports = []
 
         for edge in candidate.edges:
@@ -25,29 +37,37 @@ class AggregationStabilityEngine:
 
             fact_table = edge.source_table
             dim_table = edge.target_table
-            fk_col = edge.source_columns[0]
-            pk_col = edge.target_columns[0]
+
+            if not edge.source_columns or not edge.target_columns or len(edge.source_columns) != len(edge.target_columns):
+                logger.warning(f"Liaison composite asymétrique ou vide détectée entre {fact_table} et {dim_table}")
+                continue
 
             measure_col = self._get_best_measure(fact_table)
             if not measure_col:
+                logger.warning(f"Aucune mesure de test exploitable trouvée pour la table de faits {fact_table}")
                 continue
+
+            join_conditions = [
+                f"F.{q_ident(f_col)} = D.{q_ident(d_col)}"
+                for f_col, d_col in zip(edge.source_columns, edge.target_columns)
+            ]
+            on_clause = " AND ".join(join_conditions)
 
             sql_fine = f"""
             SELECT 
-                COALESCE(toFloat64(SUM({measure_col})), 0.0),
-                toInt64(COUNT({measure_col})),
-                COALESCE(toFloat64(AVG({measure_col})), 0.0)
+                COALESCE(toFloat64(SUM({q_ident(measure_col)})), 0.0),
+                toInt64(COUNT({q_ident(measure_col)})),
+                COALESCE(toFloat64(AVG({q_ident(measure_col)})), 0.0)
             FROM {q_ident(CH_DB)}.{q_ident(fact_table)}
             """
             
             sql_agg = f"""
             SELECT 
-                COALESCE(toFloat64(SUM(F.{measure_col})), 0.0),
-                toInt64(COUNT(F.{measure_col})),
-                COALESCE(toFloat64(AVG(F.{measure_col})), 0.0)
+                COALESCE(toFloat64(SUM(F.{q_ident(measure_col)})), 0.0),
+                toInt64(COUNT(F.{q_ident(measure_col)})),
+                COALESCE(toFloat64(AVG(F.{q_ident(measure_col)})), 0.0)
             FROM {q_ident(CH_DB)}.{q_ident(fact_table)} F
-            LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D
-            ON F.{fk_col} = D.{pk_col}
+            LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D ON {on_clause}
             """
 
             fine_row = self.db.query(sql_fine).result_rows[0]
@@ -93,27 +113,34 @@ class AggregationStabilityEngine:
         return reports
 
     def _get_best_measure(self, table_name: str):
-        '''Find the best numeric column to use as test mesure (excluing PK)'''
-        
+        """
+        Find the best numeric column to use as a test measure
+        Filter by run_ts and use broad ClickHouse type detection
+        """
         sql = f"""
         SELECT column_name 
         FROM {q_ident(META_DB)}.column_stats
-        WHERE database_name = %(db)s AND table_name = %(table)s
-        AND column_type IN ('Int32', 'Int64', 'Float32', 'Float64', 'UInt32', 'UInt64')
-        AND NOT endsWith(lower(column_name), 'id')
-        AND NOT startsWith(lower(column_name), 'id_')
-        AND NOT endsWith(lower(column_name), 'key')
-        ORDER BY variation_coefficient DESC 
-        LIMIT 1
+        WHERE database_name = %(db)s 
+          AND table_name = %(table)s
+          AND (
+              positionCaseInsensitive(column_type, 'Int') > 0
+              OR positionCaseInsensitive(column_type, 'Float') > 0
+              OR positionCaseInsensitive(column_type, 'Decimal') > 0
+          )
+          AND run_ts = (SELECT max(run_ts) FROM {q_ident(META_DB)}.column_stats WHERE database_name = %(db)s)
+        ORDER BY variation_coefficient DESC
         """
         rows = self.db.query(sql, parameters={"db": CH_DB, "table": table_name}).result_rows
                 
-        return rows[0][0] if rows else None
+        for row in rows:
+            col_name = row[0]
+            if not self._is_key_like_column(col_name):
+                return col_name
+                
+        return None
     
     def store_stability(self, reports: list[dict]) -> None:
-        """
-        Persist execution logs and calculation metrics for aggregation tests.
-        """
+        """The logs and metric calculations of the stability tests persist"""
         clear_metadata_table(self.db, "aggregation_stability")
 
         if not reports:
@@ -165,9 +192,13 @@ class AggregationStabilityEngine:
         )
 
     def print_stability(self, reports : list[dict]) -> None :
-        logger.info("=== Stability agregation test ===")
+        """Displays condensed logs of stability results"""
+        logger.info("=== Stability aggregation test ===")
         for report in reports:
             if report["is_stable"]:
                 logger.info(f'OK    | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | Delta : 0')
             else:
-                logger.info(f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | {report["reason"]} (Fin: {report["fine_sum"]} vs Agg: {report["agg_sum"]})')
+                logger.info(
+                    f'ERROR | Fact table : {report["fact_table"]:<40} -> Dim table : {report["dimension_table"]:<40} | '
+                    f'{report["reason"]} (Fin: {report["fine_sum"]} vs Agg: {report["agg_sum"]})'
+                )
