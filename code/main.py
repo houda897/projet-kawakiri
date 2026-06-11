@@ -161,14 +161,19 @@ def run_adjacency() -> None:
 
 
 def run_table_roles() -> None:
+    from semantic.semantic_homogeneity_engine import SemanticHomogeneityEngine
     db = get_manager()
     ensure_meta_schema(db)
     engine = TableRoleEngine(db)
-
+    hom_engine = SemanticHomogeneityEngine(db)
+                
     roles = engine.infer_roles()
     engine.store_roles(roles)
     engine.print_roles(roles)
 
+    reported_roles = hom_engine.check_homogeneity(roles)
+    hom_engine.store_homogeneity(reported_roles)
+    hom_engine.print_homogeneity(reported_roles)
 
 def run_sql_view_generation() -> None:
     db = get_manager()
@@ -178,6 +183,8 @@ def run_sql_view_generation() -> None:
 
 
 def run_model_candidate_building() -> None:
+    from modeling.model_ranking import ModelRanking
+    from validation.aggregation_stability_engine import AggregationStabilityEngine
     db = get_manager()
     ensure_meta_schema(db)
 
@@ -186,11 +193,20 @@ def run_model_candidate_building() -> None:
     builder.store_candidates(candidates)
     builder.print_candidates(candidates)
 
+    # Ranking des modèles
     raw_candidates = builder.load_candidates()
     ranking_engine = ModelRanking(db)
 
     ranked_candidates = ranking_engine.rank_and_store(raw_candidates)
     ranking_engine.print_ranked_models(ranked_candidates)
+
+    # Vérification des aggrégations
+    top_candidate, _ =  ranked_candidates[0]
+    stability_engine = AggregationStabilityEngine(db)
+    stability_reports = stability_engine.check_stability(top_candidate)
+
+    stability_engine.store_stability(stability_reports)
+    stability_engine.print_stability(stability_reports)
 
 
 def run_model_ranking() -> None:
