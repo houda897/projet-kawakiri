@@ -12,6 +12,7 @@ from ingestion.csv_loader import CsvIngestionEngine
 from modeling.candidate_builder import DecisionModelCandidateBuilder
 from modeling.model_ranking import ModelRanking
 from profiling.basic_profile import ProfileEngine
+from reporting.certification_report import CertificationReportExporter
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
 from validation.granularity_validator import GranularityValidator
@@ -201,6 +202,54 @@ def run_model_certification() -> None:
     engine.print_results(results)
 
 
+def run_certification_report_export(path: str) -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    exporter = CertificationReportExporter(db)
+    exporter.write_json(path)
+    logger.info("Certification report exported: %s", path)
+
+
+def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
+    """
+    Run the full available pipeline from CSV ingestion to certification report.
+
+    Semantic homogeneity and aggregation stability are intentionally not called
+    here yet because these validators are owned by separate work in progress.
+    """
+
+    steps = [
+        ("ingest-folder", lambda: run_folder_ingestion(path)),
+        ("profile-basic", run_basic_profile),
+        ("score-identifiability", run_identifiability),
+        ("infer-pk", run_pk_inference),
+        ("infer-joins", run_join_inference),
+        ("build-adjacency", run_adjacency),
+        ("infer-table-roles", run_table_roles),
+        ("build-model-candidates", run_model_candidate_building),
+        ("rank-models", run_model_ranking),
+        ("validate-structure", run_structural_validation),
+        ("validate-granularity", run_granularity_validation),
+        ("certify-models", run_model_certification),
+    ]
+
+    for step_name, step in steps:
+        logger.info("=== %s ===", step_name)
+        step()
+
+    if skip_sql_views:
+        logger.info("=== generate-sql-views skipped ===")
+    else:
+        logger.info("=== generate-sql-views ===")
+        try:
+            run_sql_view_generation()
+        except ValueError as exc:
+            logger.warning("SQL view generation skipped: %s", exc)
+
+    logger.info("=== export-certification-report ===")
+    run_certification_report_export(report_path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Kawakiri")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -319,6 +368,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     model_certification_parser.set_defaults(
         handler=lambda args: run_model_certification()
+    )
+
+    report_parser = subparsers.add_parser(
+        "export-certification-report",
+        help="Export final model certification results as JSON",
+    )
+    report_parser.add_argument("path", help="Output JSON file path")
+    report_parser.set_defaults(
+        handler=lambda args: run_certification_report_export(args.path)
+    )
+
+    run_all_parser = subparsers.add_parser(
+        "run-all",
+        help="Run the full available pipeline and export a certification report",
+    )
+    run_all_parser.add_argument("path", help="Folder path containing CSV files")
+    run_all_parser.add_argument(
+        "--report",
+        default="report.json",
+        help="Output JSON report path",
+    )
+    run_all_parser.add_argument(
+        "--skip-sql-views",
+        action="store_true",
+        help="Skip SQL view generation",
+    )
+    run_all_parser.set_defaults(
+        handler=lambda args: run_all(
+            path=args.path,
+            report_path=args.report,
+            skip_sql_views=args.skip_sql_views,
+        )
     )
 
     return parser
