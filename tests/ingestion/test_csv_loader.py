@@ -8,7 +8,6 @@ from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
-
 from config.scoring import INGESTION_SETTINGS
 from ingestion.csv_loader import (
     CsvIngestionEngine,
@@ -37,9 +36,7 @@ def test_detect_delimiter_fallback_prefers_stable_columns(
 ) -> None:
     path = tmp_path / "sample.csv"
     path.write_text(
-        "id;comment;score\n"
-        "1;hello, with comma;10\n"
-        "2;another, comma;20\n",
+        "id;comment;score\n1;hello, with comma;10\n2;another, comma;20\n",
         encoding="utf-8",
     )
 
@@ -57,10 +54,7 @@ def test_read_csv_sample_cleans_headers_and_skips_dirty_rows(
 ) -> None:
     path = tmp_path / "sample.csv"
     path.write_text(
-        "Customer ID;Name\n"
-        "1;Alice\n"
-        "---;---\n"
-        "2;Bob\n",
+        "Customer ID;Name\n1;Alice\n---;---\n2;Bob\n",
         encoding="utf-8",
     )
 
@@ -201,14 +195,22 @@ def test_build_create_table_sql_quotes_identifiers(engine: CsvIngestionEngine) -
     [
         ("7", DetectedColumn(name="id", detected_type="Int64", nullable=False), 7),
         ("1,5", DetectedColumn(name="ratio", detected_type="Float64", nullable=False), 1.5),
-        ("2024-01-31", DetectedColumn(name="day", detected_type="Date", nullable=False), date(2024, 1, 31)),
+        (
+            "2024-01-31",
+            DetectedColumn(name="day", detected_type="Date", nullable=False),
+            date(2024, 1, 31),
+        ),
         (
             "2024-01-31 10:20:30",
             DetectedColumn(name="moment", detected_type="DateTime", nullable=False),
             datetime(2024, 1, 31, 10, 20, 30),
         ),
         ("hello", DetectedColumn(name="label", detected_type="String", nullable=False), "hello"),
-        ("null", DetectedColumn(name="maybe_id", detected_type="Nullable(Int64)", nullable=True), None),
+        (
+            "null",
+            DetectedColumn(name="maybe_id", detected_type="Nullable(Int64)", nullable=True),
+            None,
+        ),
     ],
 )
 def test_cast_value(

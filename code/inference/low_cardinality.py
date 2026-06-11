@@ -98,7 +98,4 @@ class LowCardinalityAnalyzer:
         Convert low-cardinality columns to a set keyed by table and column name.
         """
 
-        return {
-            (column.table_name, column.column_name)
-            for column in columns
-        }
+        return {(column.table_name, column.column_name) for column in columns}

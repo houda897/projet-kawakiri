@@ -126,19 +126,11 @@ class KeyRankingPolicy:
 
     @classmethod
     def count_numeric_columns(cls, column_types: tuple[str, ...]) -> int:
-        return sum(
-            1
-            for column_type in column_types
-            if cls.is_numeric_type(column_type)
-        )
+        return sum(1 for column_type in column_types if cls.is_numeric_type(column_type))
 
     @classmethod
     def count_measure_like_columns(cls, column_types: tuple[str, ...]) -> int:
-        return sum(
-            1
-            for column_type in column_types
-            if cls.is_measure_like_type(column_type)
-        )
+        return sum(1 for column_type in column_types if cls.is_measure_like_type(column_type))
 
     @classmethod
     def is_numeric_type(cls, column_type: str) -> bool:

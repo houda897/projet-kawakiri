@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.clickhouse_manager import CH_DB, clickhouse_manager
 from core.schema import q_ident
 from modeling.decision_model import DecisionModelCandidate, DecisionModelEdge
+
 from validation.structural_report import StructuralValidationIssue
 
 
@@ -51,24 +52,19 @@ class ReferentialIntegrityValidator:
             )
 
         source_select = ", ".join(
-            f"{q_ident(column)} AS c{index}"
-            for index, column in enumerate(edge.source_columns)
+            f"{q_ident(column)} AS c{index}" for index, column in enumerate(edge.source_columns)
         )
         target_select = ", ".join(
-            f"{q_ident(column)} AS c{index}"
-            for index, column in enumerate(edge.target_columns)
+            f"{q_ident(column)} AS c{index}" for index, column in enumerate(edge.target_columns)
         )
         source_not_null = " AND ".join(
-            f"{q_ident(column)} IS NOT NULL"
-            for column in edge.source_columns
+            f"{q_ident(column)} IS NOT NULL" for column in edge.source_columns
         )
         join_conditions = " AND ".join(
-            f"s.c{index} = t.c{index}"
-            for index in range(len(edge.source_columns))
+            f"s.c{index} = t.c{index}" for index in range(len(edge.source_columns))
         )
         target_missing = " AND ".join(
-            f"t.c{index} IS NULL"
-            for index in range(len(edge.target_columns))
+            f"t.c{index} IS NULL" for index in range(len(edge.target_columns))
         )
 
         return f"""

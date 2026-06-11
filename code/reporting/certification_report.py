@@ -7,7 +7,6 @@ from pathlib import Path
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.schema import q_ident
 
-
 EXPECTED_RULES = (
     "PARSIMONY_RANKING",
     "STRUCTURAL_VALIDATION",
@@ -29,9 +28,7 @@ class CertificationReportExporter:
         certifications = self.load_certifications()
 
         if not certifications:
-            raise ValueError(
-                "No model certification result found. Run certify-models first."
-            )
+            raise ValueError("No model certification result found. Run certify-models first.")
 
         issues_by_model = self.load_issues()
         models = [
@@ -55,32 +52,19 @@ class CertificationReportExporter:
         issues = issues_by_model.get(certification["model_id"], [])
         issue_rules = {issue["rule_name"] for issue in issues}
         failed_rules = sorted(
-            {
-                issue["rule_name"]
-                for issue in issues
-                if issue["severity"] == "ERROR"
-            }
+            {issue["rule_name"] for issue in issues if issue["severity"] == "ERROR"}
         )
         missing_rules = sorted(
             {
                 issue["rule_name"]
                 for issue in issues
-                if issue["severity"] == "WARNING"
-                and issue["message"].lower().startswith("no ")
+                if issue["severity"] == "WARNING" and issue["message"].lower().startswith("no ")
             }
         )
         warning_rules = sorted(
-            {
-                issue["rule_name"]
-                for issue in issues
-                if issue["severity"] == "WARNING"
-            }
+            {issue["rule_name"] for issue in issues if issue["severity"] == "WARNING"}
         )
-        passed_rules = [
-            rule
-            for rule in EXPECTED_RULES
-            if rule not in issue_rules
-        ]
+        passed_rules = [rule for rule in EXPECTED_RULES if rule not in issue_rules]
 
         return {
             "model_id": certification["model_id"],
@@ -181,8 +165,4 @@ class CertificationReportExporter:
 
     @staticmethod
     def split_columns(columns: str) -> list[str]:
-        return [
-            column.strip()
-            for column in columns.split(",")
-            if column.strip()
-        ]
+        return [column.strip() for column in columns.split(",") if column.strip()]

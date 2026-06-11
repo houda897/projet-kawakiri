@@ -10,6 +10,7 @@ from core.meta import (
     load_table_role_map,
 )
 from core.schema import q_ident
+
 from modeling.decision_model import (
     DecisionModelCandidate,
     DecisionModelEdge,
@@ -245,8 +246,7 @@ class DecisionModelCandidateBuilder:
             fact_edges = [
                 edge
                 for edge in edges
-                if edge.source_table == fact_table
-                and roles.get(edge.target_table) == "DIMENSION"
+                if edge.source_table == fact_table and roles.get(edge.target_table) == "DIMENSION"
             ]
 
             if not fact_edges:
@@ -278,8 +278,7 @@ class DecisionModelCandidateBuilder:
             direct_edges = [
                 edge
                 for edge in edges
-                if edge.source_table == fact_table
-                and roles.get(edge.target_table) == "DIMENSION"
+                if edge.source_table == fact_table and roles.get(edge.target_table) == "DIMENSION"
             ]
 
             if not direct_edges:
@@ -332,36 +331,30 @@ class DecisionModelCandidateBuilder:
         facts_by_dimension: dict[str, set[str]] = defaultdict(set)
 
         for edge in edges:
-            if roles.get(edge.source_table) == "FACT" and roles.get(edge.target_table) == "DIMENSION":
+            if (
+                roles.get(edge.source_table) == "FACT"
+                and roles.get(edge.target_table) == "DIMENSION"
+            ):
                 facts_by_dimension[edge.target_table].add(edge.source_table)
 
         shared_dimensions = {
-            dimension
-            for dimension, facts in facts_by_dimension.items()
-            if len(facts) >= 2
+            dimension for dimension, facts in facts_by_dimension.items() if len(facts) >= 2
         }
 
         if not shared_dimensions:
             return []
 
         fact_tables = sorted(
-            {
-                fact
-                for dimension in shared_dimensions
-                for fact in facts_by_dimension[dimension]
-            }
+            {fact for dimension in shared_dimensions for fact in facts_by_dimension[dimension]}
         )
 
         constellation_edges = [
             edge
             for edge in edges
-            if edge.source_table in fact_tables
-            and roles.get(edge.target_table) == "DIMENSION"
+            if edge.source_table in fact_tables and roles.get(edge.target_table) == "DIMENSION"
         ]
 
-        dimension_tables = sorted(
-            {edge.target_table for edge in constellation_edges}
-        )
+        dimension_tables = sorted({edge.target_table for edge in constellation_edges})
 
         return [
             self.to_candidate(
@@ -384,13 +377,11 @@ class DecisionModelCandidateBuilder:
         tables = set(fact_tables) | set(dimension_tables)
 
         attribute_count = sum(
-            column_counts.get(table, {}).get("attribute_count", 0)
-            for table in tables
+            column_counts.get(table, {}).get("attribute_count", 0) for table in tables
         )
 
         numeric_attribute_count = sum(
-            column_counts.get(table, {}).get("numeric_attribute_count", 0)
-            for table in tables
+            column_counts.get(table, {}).get("numeric_attribute_count", 0) for table in tables
         )
 
         return DecisionModelCandidate(
@@ -406,19 +397,11 @@ class DecisionModelCandidateBuilder:
 
     @staticmethod
     def fact_tables(roles: dict[str, str]) -> list[str]:
-        return sorted(
-            table_name
-            for table_name, role in roles.items()
-            if role == "FACT"
-        )
+        return sorted(table_name for table_name, role in roles.items() if role == "FACT")
 
     @staticmethod
     def split_columns(columns: str) -> tuple[str, ...]:
-        return tuple(
-            column.strip()
-            for column in columns.split(",")
-            if column.strip()
-        )
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
 
     @staticmethod
     def print_candidates(candidates: list[DecisionModelCandidate]) -> None:

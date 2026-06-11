@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from inference.table_role import TableRoleEngine
-from inference.table_role import TableRoleCandidate
+from inference.table_role import TableRoleCandidate, TableRoleEngine
 
 
 def test_classify_table_as_fact() -> None:

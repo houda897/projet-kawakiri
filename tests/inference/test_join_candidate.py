@@ -1,8 +1,8 @@
-from inference.join_candidate import JoinPrimaryKeyCandidate, JoinEngine, SourceColumn
+from inference.join_candidate import JoinEngine, JoinPrimaryKeyCandidate, SourceColumn
 from inference.primary_key import PrimaryKeyCandidate
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def make_pk(table: str, column: str, col_type: str = "Int64") -> PrimaryKeyCandidate:
     """Build a minimal PrimaryKeyCandidate for use in tests."""
@@ -27,6 +27,7 @@ def make_source(table: str, column: str, col_type: str = "Int64") -> SourceColum
 
 # ── Tests JoinPrimaryKeyCandidate ──────────────────────────────────────────────
 
+
 def test_join_candidate_stores_all_metrics() -> None:
     """The dataclass must store all join metrics correctly."""
     candidate = JoinPrimaryKeyCandidate(
@@ -49,10 +50,11 @@ def test_join_candidate_stores_all_metrics() -> None:
 
 # ── Tests JoinEngine.should_skip_pair ─────────────────────────────────────────
 
+
 def test_should_skip_pair_rejects_same_table() -> None:
     """A column must not be compared against a PK from the same table."""
     source = make_source("sales", "product_id")
-    pk = make_pk("sales", "product_id")  
+    pk = make_pk("sales", "product_id")
 
     assert JoinEngine.should_skip_pair((source,), pk) is True
 
@@ -60,7 +62,7 @@ def test_should_skip_pair_rejects_same_table() -> None:
 def test_should_skip_pair_rejects_incompatible_types() -> None:
     """A String column cannot join an Int64 PK."""
     source = make_source("sales", "product_id", col_type="String")
-    pk = make_pk("products", "product_id", col_type="Int64") 
+    pk = make_pk("products", "product_id", col_type="Int64")
 
     assert JoinEngine.should_skip_pair((source,), pk) is True
 

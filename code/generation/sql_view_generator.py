@@ -143,12 +143,7 @@ class SQLViewGenerator:
         if model.model_type == "SNOWFLAKE":
             return self.select_reachable_edges(fact_table, edges)
 
-        return [
-            edge
-            for edge in edges
-            if edge["source_table"] == fact_table
-            and edge["depth"] == 1
-        ]
+        return [edge for edge in edges if edge["source_table"] == fact_table and edge["depth"] == 1]
 
     @staticmethod
     def select_reachable_edges(fact_table: str, edges: list[dict]) -> list[dict]:
@@ -215,10 +210,7 @@ class SQLViewGenerator:
             if current is None or self.edge_rank(edge) > self.edge_rank(current):
                 best_by_dimension[target_table] = edge
 
-        return [
-            best_by_dimension[target_table]
-            for target_table in sorted(best_by_dimension)
-        ]
+        return [best_by_dimension[target_table] for target_table in sorted(best_by_dimension)]
 
     def build_view_sql(
         self,

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import itertools
 from collections import defaultdict
 from dataclasses import dataclass
-import itertools
 
 from config.scoring import EVALUATE_CANDIDATES
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import is_numeric_type, q_ident
+
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -53,10 +54,7 @@ class JoinEngine:
         return ", ".join(q_ident(c.strip()) for c in columns_str.split(","))
 
     def _to_is_not_null_cond(self, columns_str: str) -> str:
-        return " AND ".join(
-            f"{q_ident(c.strip())} IS NOT NULL"
-            for c in columns_str.split(",")
-        )
+        return " AND ".join(f"{q_ident(c.strip())} IS NOT NULL" for c in columns_str.split(","))
 
     def evaluate_join_to_primary_key(
         self,
@@ -153,10 +151,7 @@ class JoinEngine:
         """
 
         for primary_key in primary_keys:
-            if (
-                primary_key.table_name == target_table
-                and primary_key.column_name == target_column
-            ):
+            if primary_key.table_name == target_table and primary_key.column_name == target_column:
                 return primary_key
 
         raise ValueError(
@@ -231,10 +226,7 @@ class JoinEngine:
 
         for primary_key in primary_keys:
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
-            target_types = [
-                self._clean_type(t.strip())
-                for t in primary_key.column_type.split(",")
-            ]
+            target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
 
             if is_composite and len(target_cols) > max_composite_cols:
@@ -273,9 +265,7 @@ class JoinEngine:
                         if self.should_skip_pair(combo, primary_key):
                             continue
 
-                        valid_source_combos.append(
-                            ", ".join(col.column_name for col in combo)
-                        )
+                        valid_source_combos.append(", ".join(col.column_name for col in combo))
 
                 for combo_str in valid_source_combos:
                     result = self.evaluate_join_to_primary_key(
@@ -335,10 +325,7 @@ class JoinEngine:
 
         for pk in primary_keys:
             pk_columns = [c.strip() for c in pk.column_name.split(",")]
-            pk_types = [
-                self._clean_type(t.strip())
-                for t in pk.column_type.split(",")
-            ]
+            pk_types = [self._clean_type(t.strip()) for t in pk.column_type.split(",")]
 
             for pk_col, pk_type in zip(pk_columns, pk_types, strict=False):
                 pk_stat = stats.get((pk.table_name, pk_col))
@@ -518,10 +505,7 @@ class JoinEngine:
         if same_table:
             return True
 
-        target_types = [
-            cls._clean_type(t.strip())
-            for t in primary_key.column_type.split(",")
-        ]
+        target_types = [cls._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
 
         if len(source_combo) != len(target_types):
             return True
