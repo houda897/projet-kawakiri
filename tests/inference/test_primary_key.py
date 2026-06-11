@@ -27,7 +27,7 @@ def test_primary_key_candidate_stores_all_fields() -> None:
         rows=1000,
         null_ratio=0.0,
         uniqueness_ratio=1.0,
-        identifiability_score=0.95, 
+        identifiability_score=0.95,
         confidence=1.0,
         reason="hard_rule=unique_and_complete",
     )

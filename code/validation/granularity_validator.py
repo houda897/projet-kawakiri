@@ -132,8 +132,7 @@ class GranularityValidator:
 
         selected_columns = ", ".join(q_ident(column) for column in grain_columns)
         not_null_condition = " AND ".join(
-            f"{q_ident(column)} IS NOT NULL"
-            for column in grain_columns
+            f"{q_ident(column)} IS NOT NULL" for column in grain_columns
         )
 
         return f"""

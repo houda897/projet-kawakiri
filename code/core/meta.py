@@ -26,7 +26,8 @@ def ensure_meta_schema(client) -> None:
     client.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(META_DB)}")
 
     # Store one row per ingestion attempt, including status and error message.
-    client.command(f"""
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_runs
         (
             source_path String,
@@ -41,10 +42,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """)
+        """
+    )
 
     # Store source-level diagnostics and whether human review is required.
-    client.command(f"""
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_sources
         (
             run_id String,
@@ -59,10 +62,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """)
+        """
+    )
 
     # Store inferred column metadata.
-    client.command(f"""
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.detected_columns
         (
             run_id String,
@@ -75,10 +80,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (run_id, target_database, target_table, column_name)
-        """)
+        """
+    )
 
     # Store column profiling results for each column.
-    client.command(f"""
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_profiles
         (
             database_name String,
@@ -97,10 +104,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, profiled_at)
-        """)
+        """
+    )
     # Store mathematically inferred simple primary-key candidates.
-    
-    client.command(f"""
+
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
             database_name String,
@@ -117,7 +126,8 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, confidence, column_name)
-        """)
+        """
+    )
     client.command(
         f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.identifiability_scores
@@ -137,7 +147,8 @@ def ensure_meta_schema(client) -> None:
         """
     )
 
-    client.command(f"""
+    client.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_stats
         (
             run_ts DateTime,
@@ -155,10 +166,11 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, run_ts)
-        """)
+        """
+    )
 
     client.command(
-    f"""
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.adjacency_edges
     (
         source_table String,
@@ -172,8 +184,9 @@ def ensure_meta_schema(client) -> None:
     ENGINE = MergeTree
     ORDER BY (source_table, target_table, created_at)
     """
-)
-    client.command(f"""
+    )
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.join_candidates
     (
         source_table String,
@@ -187,9 +200,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (source_table, target_table, source_column, target_column, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.table_roles
     (
         database_name String,
@@ -208,9 +223,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, table_name, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_candidates
     (
         database_name String,
@@ -226,9 +243,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_type, model_id, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_edges
     (
         database_name String,
@@ -243,9 +262,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, source_table, target_table, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_scores
     (
         database_name String,
@@ -255,9 +276,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validations
     (
         database_name String,
@@ -269,9 +292,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validation_issues
     (
         database_name String,
@@ -286,9 +311,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, rule_name, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.semantic_homogeneity
     (
         database_name String,
@@ -304,9 +331,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, table_name)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.aggregation_stability
     (
         database_name String,
@@ -329,9 +358,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, fact_table, dimension_table)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.granularity_validations
     (
         database_name String,
@@ -345,9 +376,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, fact_table, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certifications
     (
         database_name String,
@@ -361,9 +394,11 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, created_at)
-    """)
+    """
+    )
 
-    client.command(f"""
+    client.command(
+        f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certification_issues
     (
         database_name String,
@@ -376,7 +411,9 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, rule_name, created_at)
-    """)
+    """
+    )
+
 
 COMPUTED_METADATA_TABLES = (
     "column_profiles",
@@ -397,6 +434,7 @@ COMPUTED_METADATA_TABLES = (
     "model_certifications",
     "model_certification_issues",
 )
+
 
 def clear_computed_metadata(db) -> None:
     """

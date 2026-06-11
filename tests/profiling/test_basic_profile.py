@@ -3,17 +3,15 @@ from unittest.mock import MagicMock
 from core.schema import Col
 from profiling.basic_profile import ColumnProfile, ProfileEngine
 
-
 # ── Tests compute_basic_profile_for_column ────────────────────────────────────
+
 
 def test_compute_basic_profile_returns_a_column_profile() -> None:
     """The result must be a ColumnProfile populated with the values returned by ClickHouse."""
     db = MagicMock()
     # Simulate the ClickHouse response tuple:
     # (rows, non_null_rows, null_rows, null_ratio, distinct_count, uniqueness_ratio, min, max)
-    db.query.return_value.result_rows = [
-        (100, 98, 2, 0.02, 95, 0.969, "1", "999")
-    ]
+    db.query.return_value.result_rows = [(100, 98, 2, 0.02, 95, 0.969, "1", "999")]
 
     engine = ProfileEngine(db)
     col = Col(name="customer_id", ch_type="Int64")
@@ -35,9 +33,7 @@ def test_compute_basic_profile_returns_a_column_profile() -> None:
 def test_compute_basic_profile_rounds_ratios() -> None:
     """Ratios must be rounded to 6 decimal places."""
     db = MagicMock()
-    db.query.return_value.result_rows = [
-        (1000, 999, 1, 0.001000001, 999, 0.9999999, "a", "z")
-    ]
+    db.query.return_value.result_rows = [(1000, 999, 1, 0.001000001, 999, 0.9999999, "a", "z")]
 
     engine = ProfileEngine(db)
     col = Col(name="label", ch_type="String")
@@ -48,6 +44,7 @@ def test_compute_basic_profile_rounds_ratios() -> None:
 
 
 # ── Tests insert_column_profiles ─────────────────────────────────────────────
+
 
 def test_insert_column_profiles_calls_db_insert() -> None:
     """The method must issue exactly one db.insert call."""

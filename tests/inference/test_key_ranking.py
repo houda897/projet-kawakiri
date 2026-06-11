@@ -1,7 +1,7 @@
 from inference.key_ranking import KeyRankingPolicy
 
-
 # ── Tests is_numeric_type ──────────────────────────────────────────────────────
+
 
 def test_is_numeric_type_detects_numbers() -> None:
     policy = KeyRankingPolicy()
@@ -29,6 +29,7 @@ def test_is_numeric_type_handles_nullable() -> None:
 
 # ── Tests count_numeric_columns ───────────────────────────────────────────────
 
+
 def test_count_numeric_columns_counts_correctly() -> None:
     policy = KeyRankingPolicy()
 
@@ -38,6 +39,7 @@ def test_count_numeric_columns_counts_correctly() -> None:
 
 
 # ── Tests build_candidate ─────────────────────────────────────────────────────
+
 
 def test_build_candidate_computes_confidence() -> None:
     """Confidence must follow: 0.7 * uniqueness_ratio + 0.3 * identifiability_score."""
@@ -82,21 +84,32 @@ def test_build_candidate_penalises_low_cardinality_columns() -> None:
 
 # ── Tests rank ────────────────────────────────────────────────────────────────
 
+
 def test_rank_prefers_minimal_keys() -> None:
     """A single-column key must be ranked above a composite key at equal score."""
     policy = KeyRankingPolicy()
 
     single_key = policy.build_candidate(
-        database_name="db", table_name="t",
-        column_names=("id",), column_types=("Int64",),
-        rows=100, null_ratio=0.0, uniqueness_ratio=1.0,
-        identifiability_score=0.8, low_cardinality_columns=set(),
+        database_name="db",
+        table_name="t",
+        column_names=("id",),
+        column_types=("Int64",),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.8,
+        low_cardinality_columns=set(),
     )
     composite_key = policy.build_candidate(
-        database_name="db", table_name="t",
-        column_names=("col_a", "col_b"), column_types=("Int64", "String"),
-        rows=100, null_ratio=0.0, uniqueness_ratio=1.0,
-        identifiability_score=0.8, low_cardinality_columns=set(),
+        database_name="db",
+        table_name="t",
+        column_names=("col_a", "col_b"),
+        column_types=("Int64", "String"),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.8,
+        low_cardinality_columns=set(),
     )
 
     ranked = policy.rank([composite_key, single_key])
@@ -107,21 +120,32 @@ def test_rank_prefers_minimal_keys() -> None:
 
 # ── Tests select_best_by_table ────────────────────────────────────────────────
 
+
 def test_select_best_by_table_returns_one_candidate_per_table() -> None:
     """Only the best candidate per table must be kept."""
     policy = KeyRankingPolicy()
 
     c1 = policy.build_candidate(
-        database_name="db", table_name="orders",
-        column_names=("order_id",), column_types=("Int64",),
-        rows=500, null_ratio=0.0, uniqueness_ratio=1.0,
-        identifiability_score=0.9, low_cardinality_columns=set(),
+        database_name="db",
+        table_name="orders",
+        column_names=("order_id",),
+        column_types=("Int64",),
+        rows=500,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.9,
+        low_cardinality_columns=set(),
     )
     c2 = policy.build_candidate(
-        database_name="db", table_name="orders",
-        column_names=("order_code",), column_types=("String",),
-        rows=500, null_ratio=0.0, uniqueness_ratio=1.0,
-        identifiability_score=0.5, low_cardinality_columns=set(),
+        database_name="db",
+        table_name="orders",
+        column_names=("order_code",),
+        column_types=("String",),
+        rows=500,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.5,
+        low_cardinality_columns=set(),
     )
 
     best = policy.select_best_by_table([c1, c2])

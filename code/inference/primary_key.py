@@ -70,10 +70,7 @@ class PrimaryKeyEngine:
         all_candidates = simple_candidates + composite_candidates
         best_by_table = self.ranking_policy.select_best_by_table(all_candidates)
 
-        return [
-            self.to_primary_key_candidate(candidate)
-            for candidate in best_by_table.values()
-        ]
+        return [self.to_primary_key_candidate(candidate) for candidate in best_by_table.values()]
 
     def infer_ranked_simple_candidates(
         self,
@@ -150,8 +147,7 @@ class PrimaryKeyEngine:
         """
 
         all_tables = {
-            row[0]
-            for row in self.db.query(sql, parameters={"database": CH_DB}).result_rows
+            row[0] for row in self.db.query(sql, parameters={"database": CH_DB}).result_rows
         }
         tables_with_pk = {candidate.table_name for candidate in candidates}
 
@@ -175,10 +171,11 @@ class PrimaryKeyEngine:
             uniqueness_ratio=candidate.uniqueness_ratio,
             identifiability_score=candidate.identifiability_score,
             confidence=candidate.confidence,
-            reason=(f"key_type={self.key_type(candidate)}; "
-                    "confidence=weighted_uniqueness_and_identifiability; "
-                    f"ranking={candidate.rank_reason}"
-),
+            reason=(
+                f"key_type={self.key_type(candidate)}; "
+                "confidence=weighted_uniqueness_and_identifiability; "
+                f"ranking={candidate.rank_reason}"
+            ),
         )
 
     def store_candidates(

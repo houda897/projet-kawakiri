@@ -115,7 +115,6 @@ def run_join_inference() -> None:
     join_engine.store_candidates(candidates)
 
 
-
 def run_adjacency() -> None:
     db = get_manager()
 
@@ -129,7 +128,6 @@ def run_adjacency() -> None:
     adjacency_engine.store_edges(edges)
     adjacency_engine.print_matrix(matrix)
     adjacency_engine.print_binary_matrix(matrix)
-
 
 
 def run_table_roles() -> None:
@@ -166,9 +164,7 @@ def run_model_ranking() -> None:
     candidates = builder.load_candidates()
 
     if not candidates:
-        raise ValueError(
-            "No decision model candidates found. Run build-model-candidates first."
-        )
+        raise ValueError("No decision model candidates found. Run build-model-candidates first.")
 
     ranking = ModelRanking(db)
     scored_candidates = ranking.rank_and_store(candidates)
@@ -260,18 +256,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_parser.add_argument("path", help="CSV file path")
     ingest_parser.add_argument("--table", help="Target table name")
-    ingest_parser.set_defaults(
-        handler=lambda args: run_csv_ingestion(args.path, args.table)
-    )
+    ingest_parser.set_defaults(handler=lambda args: run_csv_ingestion(args.path, args.table))
 
     folder_parser = subparsers.add_parser(
         "ingest-folder",
         help="Import all CSV files from a folder",
     )
     folder_parser.add_argument("path", help="Folder path")
-    folder_parser.set_defaults(
-        handler=lambda args: run_folder_ingestion(args.path)
-    )
+    folder_parser.set_defaults(handler=lambda args: run_folder_ingestion(args.path))
 
     profile_parser = subparsers.add_parser(
         "profile-basic",
@@ -336,9 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
         "build-model-candidates",
         help="Build plausible decision model candidates from confirmed edges and inferred table roles",
     )
-    model_candidates_parser.set_defaults(
-        handler=lambda args: run_model_candidate_building()
-    )
+    model_candidates_parser.set_defaults(handler=lambda args: run_model_candidate_building())
 
     model_ranking_parser = subparsers.add_parser(
         "rank-models",
@@ -350,34 +340,26 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-structure",
         help="Validate stored decision model candidates with structural rules",
     )
-    structural_validation_parser.set_defaults(
-        handler=lambda args: run_structural_validation()
-    )
+    structural_validation_parser.set_defaults(handler=lambda args: run_structural_validation())
 
     granularity_validation_parser = subparsers.add_parser(
         "validate-granularity",
         help="Validate deterministic fact granularity for stored model candidates",
     )
-    granularity_validation_parser.set_defaults(
-        handler=lambda args: run_granularity_validation()
-    )
+    granularity_validation_parser.set_defaults(handler=lambda args: run_granularity_validation())
 
     model_certification_parser = subparsers.add_parser(
         "certify-models",
         help="Certify stored decision model candidates from ranking and validation results",
     )
-    model_certification_parser.set_defaults(
-        handler=lambda args: run_model_certification()
-    )
+    model_certification_parser.set_defaults(handler=lambda args: run_model_certification())
 
     report_parser = subparsers.add_parser(
         "export-certification-report",
         help="Export final model certification results as JSON",
     )
     report_parser.add_argument("path", help="Output JSON file path")
-    report_parser.set_defaults(
-        handler=lambda args: run_certification_report_export(args.path)
-    )
+    report_parser.set_defaults(handler=lambda args: run_certification_report_export(args.path))
 
     run_all_parser = subparsers.add_parser(
         "run-all",
