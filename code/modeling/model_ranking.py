@@ -1,5 +1,5 @@
 from config.scoring import PARSIMONY_WEIGHTS
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
@@ -15,7 +15,7 @@ class ModelRanking:
     The scoring system rewards models that are simpler (fewer tables and attributes) while also considering the richness of the data (numeric attributes, dimensions) and the structure (constellation schemas).
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def _calculate_score(self, candidate: DecisionModelCandidate) -> float:

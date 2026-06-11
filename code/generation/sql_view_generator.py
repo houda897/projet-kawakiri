@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import load_confirmed_adjacency_edges, load_table_role_map
 from core.naming import normalize_column_name as normalize_key_column_name
@@ -31,7 +31,7 @@ class SQLViewGenerator:
     Generate SQL views from the best certified decision model.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def generate_views(self) -> list[SqlViewDefinition]:

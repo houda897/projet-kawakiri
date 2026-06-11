@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from modeling.candidate_builder import DecisionModelCandidateBuilder
@@ -21,7 +21,7 @@ class StructuralValidator:
     Validate stored decision-model candidates against structural rules.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.candidate_builder = DecisionModelCandidateBuilder(db)
         self.topology_validator = TopologyValidator()

@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from config.scoring import EVALUATE_CANDIDATES
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import is_numeric_type, q_ident
@@ -47,7 +47,7 @@ class JoinEngine:
     Evaluate physical joins between profiled columns and primary-key candidates.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def _to_q_ident_list(self, columns_str: str) -> str:

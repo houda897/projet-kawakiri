@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.clickhouse_manager import CH_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, ClickHouseManager
 from core.schema import q_ident
 from modeling.decision_model import DecisionModelCandidate, DecisionModelEdge
 
@@ -12,7 +12,7 @@ class ReferentialIntegrityValidator:
     Check that every source key value exists in its target table.
     """
 
-    def __init__(self, db: clickhouse_manager, database: str = CH_DB):
+    def __init__(self, db: ClickHouseManager, database: str = CH_DB):
         self.db = db
         self.database = database
 

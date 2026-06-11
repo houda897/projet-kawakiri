@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from core.clickhouse_manager import META_DB, clickhouse_manager
+from core.clickhouse_manager import META_DB, ClickHouseManager
 from core.schema import Col, is_numeric_type, q_ident
 
 
 def compute_column_stats(
-    db: clickhouse_manager,
+    db: ClickHouseManager,
     run_ts: str,
     database: str,
     table: str,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from core.clickhouse_manager import clickhouse_manager, get_manager
+from core.clickhouse_manager import ClickHouseManager, get_manager
 from core.logger import get_logger
 from core.schema import q_ident
 
@@ -16,7 +16,7 @@ def check_functional_dependency(
     database: str,
     table: str,
     pk_candidate: str | list[str],
-    db_manager: clickhouse_manager,
+    db_manager: ClickHouseManager,
 ) -> bool:
     """
     Check whether a single-column or composite candidate uniquely identifies rows.
