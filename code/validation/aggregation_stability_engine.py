@@ -1,16 +1,15 @@
 from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
-from core.logger import get_logger
-from core.meta import clear_metadata_table
 from core.schema import q_ident
+from core.logger import get_logger
 from modeling.decision_model import DecisionModelCandidate
+from core.meta import clear_metadata_table
 
 logger = get_logger(__name__)
-
 
 class AggregationStabilityEngine:
     def __init__(self, db: clickhouse_manager):
         self.db = db
-        self.epsilon = 0.001
+        self.epsilon = 0.001 
 
     def _is_key_like_column(self, column_name: str) -> bool:
         """Detects if a column has a typical key or identifier name"""
@@ -27,59 +26,60 @@ class AggregationStabilityEngine:
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
         """
-        Verifies that the join with the model dimensions does not cause data loss or duplication (fan-out) on SUM, COUNT, and AVG.
-        Natively handles composite primary keys
+        Checks the stability of the level aggregation (Roll-Up)
+        Calculates the raw sum, then groups by a dimension attribute 
+        reaggregates everything and compares to detect fan-out (duplication)
         """
         reports = []
 
         for edge in candidate.edges:
-            if (
-                edge.source_table not in candidate.fact_tables
-                or edge.target_table not in candidate.dimension_tables
-            ):
+            if edge.source_table not in candidate.fact_tables or edge.target_table not in candidate.dimension_tables:
                 continue
 
             fact_table = edge.source_table
             dim_table = edge.target_table
 
-            if (
-                not edge.source_columns
-                or not edge.target_columns
-                or len(edge.source_columns) != len(edge.target_columns)
-            ):
-                logger.warning(
-                    f"Liaison composite asymétrique ou vide détectée entre {fact_table} et {dim_table}"
-                )
+            if not edge.source_columns or not edge.target_columns or len(edge.source_columns) != len(edge.target_columns):
+                logger.warning(f"Liaison composite asymétrique ou vide détectée entre {fact_table} et {dim_table}")
                 continue
 
             measure_col = self._get_best_measure(fact_table)
             if not measure_col:
-                logger.warning(
-                    f"Aucune mesure de test exploitable trouvée pour la table de faits {fact_table}"
-                )
+                continue
+
+            group_col = self._get_best_dimension_grouping(dim_table)
+            if not group_col:
+                logger.warning(f"Aucun axe d'analyse exploitable dans la dimension {dim_table}")
                 continue
 
             join_conditions = [
                 f"F.{q_ident(f_col)} = D.{q_ident(d_col)}"
-                for f_col, d_col in zip(edge.source_columns, edge.target_columns, strict=False)
+                for f_col, d_col in zip(edge.source_columns, edge.target_columns)
             ]
             on_clause = " AND ".join(join_conditions)
 
             sql_fine = f"""
-            SELECT
+            SELECT 
                 COALESCE(toFloat64(SUM({q_ident(measure_col)})), 0.0),
                 toInt64(COUNT({q_ident(measure_col)})),
                 COALESCE(toFloat64(AVG({q_ident(measure_col)})), 0.0)
             FROM {q_ident(CH_DB)}.{q_ident(fact_table)}
             """
-
+            
             sql_agg = f"""
-            SELECT
-                COALESCE(toFloat64(SUM(F.{q_ident(measure_col)})), 0.0),
-                toInt64(COUNT(F.{q_ident(measure_col)})),
-                COALESCE(toFloat64(AVG(F.{q_ident(measure_col)})), 0.0)
-            FROM {q_ident(CH_DB)}.{q_ident(fact_table)} F
-            LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D ON {on_clause}
+            SELECT 
+                COALESCE(toFloat64(SUM(agg_sum)), 0.0),
+                toInt64(SUM(agg_count)),
+                COALESCE(toFloat64(SUM(agg_sum) / NULLIF(SUM(agg_count), 0)), 0.0)
+            FROM (
+                SELECT 
+                    D.{q_ident(group_col)} AS dim_level,
+                    SUM(F.{q_ident(measure_col)}) AS agg_sum,
+                    COUNT(F.{q_ident(measure_col)}) AS agg_count
+                FROM {q_ident(CH_DB)}.{q_ident(fact_table)} F
+                LEFT JOIN {q_ident(CH_DB)}.{q_ident(dim_table)} D ON {on_clause}
+                GROUP BY dim_level
+            )
             """
 
             fine_row = self.db.query(sql_fine).result_rows[0]
@@ -99,45 +99,39 @@ class AggregationStabilityEngine:
             is_stable = is_stable_sum and is_stable_count and is_stable_avg
 
             reasons = []
-            if not is_stable_sum:
-                reasons.append("SUM instability")
-            if not is_stable_count:
-                reasons.append("COUNT instability")
-            if not is_stable_avg:
-                reasons.append("AVERAGE instability")
-            reason_str = ", ".join(reasons) if not is_stable else "Stable"
+            if not is_stable_sum: reasons.append("SUM instability")
+            if not is_stable_count: reasons.append("COUNT instability")
+            if not is_stable_avg: reasons.append("AVERAGE instability")
+            reason_str = ", ".join(reasons) if not is_stable else f"Stable (Groupé par {group_col})"
 
-            reports.append(
-                {
-                    "model_id": candidate.model_id,
-                    "fact_table": fact_table,
-                    "dimension_table": dim_table,
-                    "measure_column": measure_col,
-                    "fine_sum": fine_sum,
-                    "agg_sum": agg_sum,
-                    "delta_sum": round(delta_sum, 4),
-                    "fine_count": fine_count,
-                    "agg_count": agg_count,
-                    "delta_count": delta_count,
-                    "fine_avg": round(fine_avg, 4),
-                    "agg_avg": round(agg_avg, 4),
-                    "delta_avg": round(delta_avg, 4),
-                    "is_stable": is_stable,
-                    "reason": reason_str,
-                }
-            )
-
+            reports.append({
+                "model_id": candidate.model_id,
+                "fact_table": fact_table,
+                "dimension_table": dim_table,
+                "measure_column": measure_col,
+                "fine_sum": fine_sum,
+                "agg_sum": agg_sum,
+                "delta_sum": round(delta_sum, 4),
+                "fine_count": fine_count,
+                "agg_count": agg_count,
+                "delta_count": delta_count,
+                "fine_avg": round(fine_avg, 4),
+                "agg_avg": round(agg_avg, 4),
+                "delta_avg": round(delta_avg, 4),
+                "is_stable": is_stable,
+                "reason": reason_str
+            })
+            
         return reports
 
     def _get_best_measure(self, table_name: str):
         """
-        Find the best numeric column to use as a test measure
-        Filter by run_ts and use broad ClickHouse type detection
+        Find the best numerical column to use as a test measure
         """
         sql = f"""
-        SELECT column_name
+        SELECT column_name 
         FROM {q_ident(META_DB)}.column_stats
-        WHERE database_name = %(db)s
+        WHERE database_name = %(db)s 
           AND table_name = %(table)s
           AND (
               positionCaseInsensitive(column_type, 'Int') > 0
@@ -148,14 +142,36 @@ class AggregationStabilityEngine:
         ORDER BY variation_coefficient DESC
         """
         rows = self.db.query(sql, parameters={"db": CH_DB, "table": table_name}).result_rows
-
+                
         for row in rows:
             col_name = row[0]
             if not self._is_key_like_column(col_name):
                 return col_name
-
+                
         return None
 
+    def _get_best_dimension_grouping(self, table_name: str):
+        """
+        Find the ideal column in the dimension to create an analysis axis (GROUP BY) 
+        Columns with low entropy are preferred (e.g., Category, Month, Status)
+        """
+        sql = f"""
+        SELECT column_name 
+        FROM {q_ident(META_DB)}.column_stats
+        WHERE database_name = %(db)s 
+          AND table_name = %(table)s
+          AND run_ts = (SELECT max(run_ts) FROM {q_ident(META_DB)}.column_stats WHERE database_name = %(db)s)
+        ORDER BY entropy_ratio ASC
+        """
+        rows = self.db.query(sql, parameters={"db": CH_DB, "table": table_name}).result_rows
+                
+        for row in rows:
+            col_name = row[0]
+            if not self._is_key_like_column(col_name):
+                return col_name
+                
+        return rows[0][0] if rows else None
+    
     def store_stability(self, reports: list[dict]) -> None:
         """The logs and metric calculations of the stability tests persist"""
         clear_metadata_table(self.db, "aggregation_stability")
@@ -208,16 +224,14 @@ class AggregationStabilityEngine:
             ],
         )
 
-    def print_stability(self, reports: list[dict]) -> None:
+    def print_stability(self, reports : list[dict]) -> None :
         """Displays condensed logs of stability results"""
         logger.info("=== Stability aggregation test ===")
         for report in reports:
             if report["is_stable"]:
-                logger.info(
-                    f"OK    | Fact table : {report['fact_table']:<40} -> Dim table : {report['dimension_table']:<40} | Delta : 0"
-                )
+                logger.info(f'OK    | Fact table : {report["fact_table"]:<35} -> Dim table : {report["dimension_table"]:<35} | Delta : 0')
             else:
-                logger.info(
-                    f"ERROR | Fact table : {report['fact_table']:<40} -> Dim table : {report['dimension_table']:<40} | "
-                    f"{report['reason']} (Fin: {report['fine_sum']} vs Agg: {report['agg_sum']})"
+                logger.warning(
+                    f'ERROR | Fact table : {report["fact_table"]:<35} -> Dim table : {report["dimension_table"]:<35} | '
+                    f'{report["reason"]} (Fin: {report["fine_sum"]} vs Agg: {report["agg_sum"]})'
                 )
