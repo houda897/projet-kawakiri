@@ -8,11 +8,21 @@ logger = get_logger(__name__)
 
 
 class AggregationStabilityValidator:
+    """
+    Validates the structural integrity of decision models (Star/Snowflake schemas) 
+    by ensuring that joining a fact table to a dimension table does not alter 
+    the underlying data metrics (no fan-out/duplication, no data loss).
+    """
+
     def __init__(self, db: ClickHouseManager):
         self.db = db
         self.epsilon = 0.001
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
+        """
+        Main orchestrator. Iterates through all valid fact-to-dimension relationships 
+        in a model candidate, dynamically selects test columns, and runs the stability checks.
+        """
         reports = []
 
         for edge in candidate.edges:
@@ -73,6 +83,10 @@ class AggregationStabilityValidator:
         measure_column: str,
         group_column: str,
     ) -> dict:
+        """
+        Executes two SQL queries: one on the raw fact table (fine grain) and one 
+        aggregated through a JOIN (roll-up). Returns the raw metrics for comparison.
+        """
         join_conditions = [
             f"F.{q_ident(source_col)} = D.{q_ident(target_col)}"
             for source_col, target_col in zip(source_columns, target_columns, strict=True)
@@ -153,6 +167,10 @@ class AggregationStabilityValidator:
         fine_max: float,
         agg_max: float,
     ) -> dict:
+        """
+        Calculates the deltas between fine and aggregated metrics.
+        Determines the stability status and generates error messages if thresholds are exceeded.
+        """
         delta_sum = abs(fine_sum - agg_sum)
         delta_count = abs(fine_count - agg_count)
         delta_avg = abs(fine_avg - agg_avg)
@@ -204,6 +222,11 @@ class AggregationStabilityValidator:
         }
 
     def _get_best_measure(self, table_name: str) -> str | None:
+        """
+        Finds the most suitable numerical column in a fact table to be used as a measure.
+        Prefers columns with high variation coefficients (e.g., amounts, quantities) 
+        and explicitly ignores primary/foreign keys.
+        """
         sql = f"""
         SELECT column_name
         FROM {q_ident(META_DB)}.column_stats
@@ -236,6 +259,11 @@ class AggregationStabilityValidator:
         return None
 
     def _get_best_dimension_grouping(self, table_name: str) -> str | None:
+        """
+        Finds the ideal descriptive attribute in a dimension to group data by.
+        It avoids unique IDs and continuous measures, favoring categorical strings 
+        or dates with low entropy (e.g., Status, Month, Category).
+        """
         sql = f"""
         SELECT
             s.column_name,
@@ -285,6 +313,9 @@ class AggregationStabilityValidator:
         return None
 
     def store_stability(self, reports: list[dict]) -> None:
+        """
+        Persists the validation logs and metric deltas into the metadata database.
+        """
         clear_metadata_table(self.db, "aggregation_stability")
 
         if not reports:
@@ -350,6 +381,9 @@ class AggregationStabilityValidator:
         )
 
     def print_stability(self, reports: list[dict]) -> None:
+        """
+        Outputs a summary of the stability tests to the application logger.
+        """
         logger.info("=== Aggregation stability test ===")
 
         if not reports:
@@ -379,6 +413,9 @@ class AggregationStabilityValidator:
 
     @staticmethod
     def _is_key_like_column(column_name: str) -> bool:
+        """
+        Helper method to detect technical keys/IDs based on naming conventions.
+        """
         name = column_name.lower()
         return (
             name.endswith("id")
@@ -392,5 +429,8 @@ class AggregationStabilityValidator:
 
     @staticmethod
     def _is_measure_like_type(column_type: str) -> bool:
+        """
+        Helper method to determine if a ClickHouse type represents continuous data (Floats/Decimals).
+        """
         normalized_type = column_type.lower()
         return "float" in normalized_type or "decimal" in normalized_type
