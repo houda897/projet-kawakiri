@@ -60,14 +60,6 @@ def test_enrich_edges_with_semantics(semantic_engine):
     ]
     
     enriched = semantic_engine.enrich_edges_with_semantics(edges)
-    
-    print('\n')
-    print(enriched[0].hybrid_score)
-    print(enriched[1].hybrid_score)
-    print(enriched[2].hybrid_score)
-    print(enriched[0].evidence)
-    print(enriched[1].evidence)
-    print(enriched[2].evidence)
 
     assert enriched[0].evidence == "CONFIRMED"
     assert enriched[0].hybrid_score == 1.0
