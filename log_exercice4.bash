@@ -1,9 +1,9 @@
 --- *** --- join_inference --- *** ---
 
-2026-06-12 10:54:45,146 - inference.join_candidate - INFO - [PREFILTER] 230 columns -> 195 kept (35 removed)
-2026-06-12 10:54:45,147 - inference.join_candidate - INFO - [SKIP] composite PK is too long (5 cols): STG_EHP_DIAG.REFR_NO, ROM_ID, DIG_DES, DTYPE_DES, DSTAT_CD
-2026-06-12 10:54:45,148 - inference.join_candidate - INFO - [SKIP] composite PK is too long (4 cols): STG_EHP_INVN.MAT_SKU, CLSD_STF, ISSD_STF, OPEN_STF
-
+2026-06-12 10:58:32,136 - inference.join_candidate - INFO - [PREFILTER] 230 columns -> 195 kept (35 removed)
+Nombre de boucles : 310 | temps écoulé : 0:00:46.4436502026-06-12 10:59:18,582 - inference.join_candidate - INFO - [SKIP] composite PK is too long (5 cols): STG_EHP_DIAG.REFR_NO, ROM_ID, DIG_DES, DTYPE_DES, DSTAT_CD
+Nombre de boucles : 784 | temps écoulé : 0:01:21.3695272026-06-12 10:59:53,507 - inference.join_candidate - INFO - [SKIP] composite PK is too long (4 cols): STG_EHP_INVN.MAT_SKU, CLSD_STF, ISSD_STF, OPEN_STF
+Nombre de boucles : 2900 | temps écoulé : 0:06:39.833965
 --- *** --- taille candidates : 2202 --- *** ---
 
 STG_EHP_APPT.ASTAT_CD -> STG_EHP_ALGY.ALG_ID | ratio=1.0
@@ -2209,4 +2209,4 @@ STG_EHP_VIST.VSTAT_CD -> STG_EHP_VPMT.WRE_NO | ratio=1.0
 STG_EHP_VIST.VTYPE_CD -> STG_EHP_VPMT.WRE_NO | ratio=1.0
 STG_EHP_VNDR.VSTAT_CD -> STG_EHP_VPMT.WRE_NO | ratio=1.0
 
---- *** --- adjacency --- *** --- time: 0:02:19.800952 (absolute: 0:03:58.256922)
+--- *** --- join_inference --- *** --- time: 0:06:40.366961 (absolute: 0:09:49.823101)
