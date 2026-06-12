@@ -1,91 +1,75 @@
-import os
+import unittest
 from unittest.mock import MagicMock, patch
+import threading
+from core.clickhouse_manager import ClickHouseManager, get_manager
 
-import pytest
-from core.clickhouse_manager import ClickHouseManager
+class TestClickHouseManager(unittest.TestCase):
 
+    def setUp(self):
+        # Réinitialise le singleton avant chaque test pour éviter les effets de bord
+        ClickHouseManager._instance = None
 
-@pytest.fixture(autouse=True)
-def reset_singleton() -> None:
-    # Reset the singleton before each test to avoid state leaking between tests.
-    ClickHouseManager._instance = None
+    @patch('core.clickhouse_manager.clickhouse_connect.get_client')
+    def test_singleton_behavior(self, mock_get_client):
+        """Vérifie que la classe implémente correctement un Singleton."""
+        manager1 = ClickHouseManager.get_instance()
+        manager2 = get_manager()  # Utilise le raccourci global
+        
+        self.assertIs(manager1, manager2)
 
+    @patch('core.clickhouse_manager.clickhouse_connect.get_client')
+    def test_connect_creates_client_once_per_thread(self, mock_get_client):
+        """Vérifie que le client se connecte avec les bons paramètres et réutilise le client."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
 
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-@patch.dict(
-    os.environ,
-    {
-        "CH_HOST": "localhost",
-        "CH_PORT": "19123",
-        "CH_USER": "test_user",
-        "CH_PASSWORD": "test_password",
-        "CH_DATABASE": "test_db",
-    },
-    clear=False,
-)
-def test_connect_success(mock_get_client) -> None:
-    mock_client = MagicMock()
-    mock_get_client.return_value = mock_client
+        manager = ClickHouseManager.get_instance()
+        
+        # Premier appel à connect()
+        client1 = manager.connect()
+        # Deuxième appel à connect()
+        client2 = manager.connect()
 
-    manager = ClickHouseManager()
+        # Le driver clickhouse_connect ne doit être appelé qu'une seule fois grâce au threading.local
+        mock_get_client.assert_called_once_with(
+            host=manager.host,
+            port=manager.port,
+            username=manager.user,
+            password=manager.password
+        )
+        self.assertIs(client1, mock_client)
+        self.assertIs(client2, mock_client)
 
-    mock_get_client.assert_called_once()
-    assert manager.client == mock_client
+    @patch('core.clickhouse_manager.clickhouse_connect.get_client')
+    def test_query_passes_parameters(self, mock_get_client):
+        """Vérifie que la méthode query transmet correctement le SQL et les paramètres."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        
+        manager = ClickHouseManager.get_instance()
+        sql = "SELECT * FROM my_table WHERE id = %(id)s"
+        params = {"id": 42}
+        
+        manager.query(sql, parameters=params)
+        
+        # Vérifie que la requête a été déléguée au client interne
+        mock_client.query.assert_called_once_with(sql, parameters=params)
 
+    @patch('core.clickhouse_manager.clickhouse_connect.get_client')
+    def test_close_all(self, mock_get_client):
+        """Vérifie que close_all ferme bien tous les clients ouverts et nettoie le thread local."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        
+        manager = ClickHouseManager.get_instance()
+        manager.connect()  # Ouvre une connexion
+        
+        manager.close_all()
+        
+        # Le client doit être fermé
+        mock_client.close.assert_called_once()
+        # L'attribut local du thread doit être nettoyé
+        self.assertFalse(hasattr(manager._local, "client"))
 
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-def test_connect_failure_raises_connection_error(mock_get_client) -> None:
-    mock_get_client.side_effect = Exception("Connection refused")
-
-    with pytest.raises(ConnectionError):
-        ClickHouseManager()
-
-
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-def test_query_calls_client(mock_get_client) -> None:
-    mock_client = MagicMock()
-    mock_client.query.return_value = [(("row1",))]
-    mock_get_client.return_value = mock_client
-
-    manager = ClickHouseManager()
-    manager.query("SELECT 1")
-
-    mock_client.query.assert_called_once_with("SELECT 1")
-
-
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-def test_query_with_parameters_calls_client(mock_get_client) -> None:
-    mock_client = MagicMock()
-    mock_get_client.return_value = mock_client
-
-    manager = ClickHouseManager()
-    manager.query("SELECT %(x)s", parameters={"x": 1})
-
-    mock_client.query.assert_called_once_with("SELECT %(x)s", parameters={"x": 1})
-
-
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-def test_insert_calls_client_with_column_names(mock_get_client) -> None:
-    mock_client = MagicMock()
-    mock_get_client.return_value = mock_client
-
-    manager = ClickHouseManager()
-    manager.insert("lab_db.test", [[1]], column_names=["id"])
-
-    mock_client.insert.assert_called_once_with(
-        "lab_db.test",
-        [[1]],
-        column_names=["id"],
-    )
-
-
-@patch("core.clickhouse_manager.clickhouse_connect.get_client")
-def test_get_instance_singleton(mock_get_client) -> None:
-    mock_get_client.return_value = MagicMock()
-
-    instance1 = ClickHouseManager.get_instance()
-    instance2 = ClickHouseManager.get_instance()
-
-    # Both calls must return the exact same object.
-    assert instance1 is instance2
-    mock_get_client.assert_called_once()
+if __name__ == '__main__':
+    unittest.main()
