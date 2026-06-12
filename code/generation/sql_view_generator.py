@@ -141,9 +141,30 @@ class SQLViewGenerator:
         edges: list[dict],
     ) -> list[dict]:
         if model.model_type == "SNOWFLAKE":
-            return self.select_reachable_edges(fact_table, edges)
+            return self.select_reachable_edges(fact_table, self.deduplicate_edges(edges))
 
-        return [edge for edge in edges if edge["source_table"] == fact_table and edge["depth"] == 1]
+        return self.deduplicate_edges(
+            [
+                edge
+                for edge in edges
+                if edge["source_table"] == fact_table and edge["depth"] == 1
+            ]
+        )
+
+    def deduplicate_edges(self, edges: list[dict]) -> list[dict]:
+        best_by_link: dict[tuple[str, str], dict] = {}
+
+        for edge in edges:
+            link = (edge["source_table"], edge["target_table"])
+            current = best_by_link.get(link)
+
+            if current is None or self.edge_rank(edge) > self.edge_rank(current):
+                best_by_link[link] = edge
+
+        return sorted(
+            best_by_link.values(),
+            key=lambda edge: (edge["depth"], edge["source_table"], edge["target_table"]),
+        )
 
     @staticmethod
     def select_reachable_edges(fact_table: str, edges: list[dict]) -> list[dict]:
@@ -225,12 +246,17 @@ class SQLViewGenerator:
 
         join_lines = []
 
-        for index, edge in enumerate(edges, start=1):
+        for edge in edges:
             source_table = edge["source_table"]
             dim_table = edge["target_table"]
             source_alias = table_aliases[source_table]
-            dim_alias = table_aliases.setdefault(dim_table, f"d{index}")
+            dim_alias = table_aliases.get(dim_table)
 
+            if dim_alias is not None:
+                continue
+
+            dim_alias = f"d{len(table_aliases)}"
+            table_aliases[dim_table] = dim_alias
             select_lines.append(f"    {dim_alias}.*")
 
             source_columns = self.split_columns(edge["source_columns"])

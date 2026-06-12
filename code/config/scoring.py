@@ -56,3 +56,15 @@ SEMANTIC_HOMOGENEITY_WEIGHTS = {
     "variation_coef_weight": 0.3,
     "skewness_weight": 0.3,
 }
+
+AGGREGATION_STABILITY_THRESHOLDS = {
+    "absolute_epsilon": 0.001,
+    "relative_epsilon": 0.000001,
+}
+
+CERTIFICATION_SCORE_WEIGHTS = {
+    "initial_score": 100.0,
+    "error_penalty": 35.0,
+    "warning_penalty": 10.0,
+    "minimum_score": 0.0,
+}
