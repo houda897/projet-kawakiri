@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import itertools
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+
+from colorama import Fore, Style
 
 from config.scoring import EVALUATE_CANDIDATES
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import is_numeric_type, normalize_clickhouse_type, q_ident
+from core.schema import is_numeric_type, q_ident
+
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -198,14 +202,11 @@ class JoinEngine:
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
         max_workers: int | None = None,
+        show_progress: bool = True,
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
-
-        from datetime import datetime
-        from colorama import Fore, Style
-
         if source_columns is None:
             source_columns = self.load_source_columns()
         stats = self.load_column_stats()
@@ -223,9 +224,10 @@ class JoinEngine:
             cols_by_table[col.table_name].append(col)
             cols_by_table_type[col.table_name][clean_type].append(col)
 
+        # Phase 1 (sequential, in-memory): exactly the same enumeration logic
+        # as before, but instead of evaluating immediately we collect jobs.
         jobs: list[tuple[str, str, PrimaryKeyCandidate]] = []
         for primary_key in primary_keys:
-
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
@@ -238,7 +240,6 @@ class JoinEngine:
                 )
                 continue
             for table_name in cols_by_table:
-
                 if table_name == primary_key.table_name:
                     continue
                 valid_source_combos = []
@@ -254,11 +255,6 @@ class JoinEngine:
                     if any(len(pool) == 0 for pool in pools):
                         continue
                     for combo in itertools.product(*pools):
-
-                        iter += 1
-                        elapsed_time = datetime.now() - time
-                        print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
-
                         if len({col.column_name for col in combo}) != len(combo):
                             continue
                         if self.should_skip_pair(combo, primary_key):
@@ -270,6 +266,8 @@ class JoinEngine:
         if not jobs:
             return []
 
+        # Phase 2 (parallel): the expensive part — one call per job to
+        # evaluate_join_to_primary_key, run concurrently across threads.
         def _evaluate(job: tuple[str, str, PrimaryKeyCandidate]) -> JoinPrimaryKeyCandidate:
             table_name, combo_str, primary_key = job
             return self.evaluate_join_to_primary_key(
@@ -279,14 +277,36 @@ class JoinEngine:
                 limit_rows=limit_rows,
             )
 
+        total_jobs = len(jobs)
+        start_time = time.monotonic()
         candidates: list[JoinPrimaryKeyCandidate] = []
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                for result in executor.map(_evaluate, jobs):
+                for i, result in enumerate(executor.map(_evaluate, jobs), start=1):
                     if result.join_success_ratio >= min_success_ratio:
                         candidates.append(result)
+                    if show_progress:
+                        elapsed_time = time.monotonic() - start_time
+                        print(
+                            Fore.RED
+                            + f"\rIteration : {i}/{total_jobs} | time : {elapsed_time:.1f}s"
+                            + Style.RESET_ALL,
+                            end="",
+                            flush=True,
+                        )
+            if show_progress:
+                print()
         finally:
+            # Each worker thread opened its own ClickHouse client; release
+            # them now that the parallel batch is done.
             self.db.close_all()
+
+        logger.info(
+            "[EVALUATE] %s combinations checked in %.1fs, %s candidates kept",
+            total_jobs,
+            time.monotonic() - start_time,
+            len(candidates),
+        )
 
         return candidates
 
@@ -491,8 +511,8 @@ class JoinEngine:
 
     @staticmethod
     def _clean_type(ch_type: str) -> str:
-        """Normalize ClickHouse wrappers before comparing physical types."""
-        return normalize_clickhouse_type(ch_type)
+        """Strip Nullable() wrapper to compare base physical types."""
+        return ch_type.removeprefix("Nullable(").removesuffix(")")
 
     @staticmethod
     def _has_range_values(*values: object) -> bool:
