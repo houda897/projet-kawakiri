@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from config.scoring import EVALUATE_CANDIDATES
@@ -196,38 +197,38 @@ class JoinEngine:
         ),
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
+        max_workers: int | None = None,
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
 
+        from datetime import datetime
+        from colorama import Fore, Style
+
         if source_columns is None:
             source_columns = self.load_source_columns()
-
         stats = self.load_column_stats()
         source_columns = self.prefilter_source_columns(
             primary_keys=primary_keys,
             source_columns=source_columns,
             stats=stats,
         )
-
         cols_by_table: dict[str, list[SourceColumn]] = defaultdict(list)
         cols_by_table_type: dict[str, dict[str, list[SourceColumn]]] = defaultdict(
             lambda: defaultdict(list)
         )
-
         for col in source_columns:
             clean_type = self._clean_type(col.column_type)
             cols_by_table[col.table_name].append(col)
             cols_by_table_type[col.table_name][clean_type].append(col)
 
-        candidates = []
-
+        jobs: list[tuple[str, str, PrimaryKeyCandidate]] = []
         for primary_key in primary_keys:
+
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
-
             if is_composite and len(target_cols) > max_composite_cols:
                 logger.info(
                     "[SKIP] composite PK is too long (%s cols): %s.%s",
@@ -236,46 +237,51 @@ class JoinEngine:
                     primary_key.column_name,
                 )
                 continue
-
             for table_name in cols_by_table:
+
                 if table_name == primary_key.table_name:
                     continue
-
                 valid_source_combos = []
-
                 if not is_composite:
                     for src in cols_by_table_type[table_name].get(target_types[0], []):
                         if not self.should_skip_pair((src,), primary_key):
                             valid_source_combos.append(src.column_name)
-
                 else:
                     pools = [
                         cols_by_table_type[table_name].get(target_type, [])
                         for target_type in target_types
                     ]
-
                     if any(len(pool) == 0 for pool in pools):
                         continue
-
                     for combo in itertools.product(*pools):
                         if len({col.column_name for col in combo}) != len(combo):
                             continue
-
                         if self.should_skip_pair(combo, primary_key):
                             continue
-
                         valid_source_combos.append(", ".join(col.column_name for col in combo))
-
                 for combo_str in valid_source_combos:
-                    result = self.evaluate_join_to_primary_key(
-                        source_table=table_name,
-                        source_column=combo_str,
-                        primary_key=primary_key,
-                        limit_rows=limit_rows,
-                    )
+                    jobs.append((table_name, combo_str, primary_key))
 
+        if not jobs:
+            return []
+
+        def _evaluate(job: tuple[str, str, PrimaryKeyCandidate]) -> JoinPrimaryKeyCandidate:
+            table_name, combo_str, primary_key = job
+            return self.evaluate_join_to_primary_key(
+                source_table=table_name,
+                source_column=combo_str,
+                primary_key=primary_key,
+                limit_rows=limit_rows,
+            )
+
+        candidates: list[JoinPrimaryKeyCandidate] = []
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for result in executor.map(_evaluate, jobs):
                     if result.join_success_ratio >= min_success_ratio:
                         candidates.append(result)
+        finally:
+            self.db.close_all()
 
         return candidates
 
