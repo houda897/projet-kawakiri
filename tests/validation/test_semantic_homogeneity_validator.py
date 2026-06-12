@@ -19,6 +19,11 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         self.assertFalse(self.validator.is_key_like_column("order_quantity"))
         self.assertFalse(self.validator.is_key_like_column("CustomerName"))
         self.assertFalse(self.validator.is_key_like_column("created_date"))
+        self.assertFalse(self.validator.is_key_like_column("valid"))
+        self.assertFalse(self.validator.is_key_like_column("paid"))
+        self.assertFalse(self.validator.is_key_like_column("rapid"))
+        self.assertFalse(self.validator.is_key_like_column("casino"))
+        self.assertFalse(self.validator.is_key_like_column("unicode"))
 
     def test_check_fact_homogeneity_valid(self):
         """Test a valid fact (only keys, dates and measurements)"""

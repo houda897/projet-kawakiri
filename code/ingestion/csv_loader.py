@@ -10,7 +10,7 @@ from config.scoring import INGESTION_SETTINGS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
-from core.schema import q_ident
+from core.schema import normalize_clickhouse_type, q_ident
 
 logger = get_logger(__name__)
 
@@ -379,7 +379,11 @@ ORDER BY tuple()
         batch: list[list[Any]],
         column_names: list[str],
     ) -> None:
-        self.db.insert(f"{database}.{table}", batch, column_names=column_names)
+        self.db.insert(
+            f"{q_ident(database)}.{q_ident(table)}",
+            batch,
+            column_names=column_names,
+        )
 
     def iter_csv_rows(
         self,
@@ -703,7 +707,7 @@ ORDER BY tuple()
 
     @staticmethod
     def base_type(clickhouse_type: str) -> str:
-        return clickhouse_type.removeprefix("Nullable(").removesuffix(")")
+        return normalize_clickhouse_type(clickhouse_type)
 
     @staticmethod
     def is_int(value: str) -> bool:

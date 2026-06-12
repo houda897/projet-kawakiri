@@ -8,7 +8,7 @@ from config.scoring import EVALUATE_CANDIDATES
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import is_numeric_type, q_ident
+from core.schema import is_numeric_type, normalize_clickhouse_type, q_ident
 
 from inference.primary_key import PrimaryKeyCandidate
 
@@ -481,8 +481,8 @@ class JoinEngine:
 
     @staticmethod
     def _clean_type(ch_type: str) -> str:
-        """Strip Nullable() wrapper to compare base physical types."""
-        return ch_type.removeprefix("Nullable(").removesuffix(")")
+        """Normalize ClickHouse wrappers before comparing physical types."""
+        return normalize_clickhouse_type(ch_type)
 
     @staticmethod
     def _has_range_values(*values: object) -> bool:

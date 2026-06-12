@@ -245,7 +245,7 @@ def test_insert_csv_rows_casts_and_inserts_batches(
 
     assert count == 2
     db.insert.assert_called_once_with(
-        "lab_db.sales",
+        "`lab_db`.`sales`",
         [[1, 10.5], [2, 20.5]],
         column_names=["id", "amount"],
     )

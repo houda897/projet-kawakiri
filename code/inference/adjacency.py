@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from core.clickhouse_manager import META_DB, ClickHouseManager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
-from core.meta import clear_metadata_table
+from core.schema import q_ident
 
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
@@ -105,13 +105,20 @@ class AdjacencyMatrixEngine:
         Store adjacency edges in the metadata database.
         """
 
-        clear_metadata_table(self.db, "adjacency_edges")
+        self.db.command(
+            f"""
+            ALTER TABLE {q_ident(META_DB)}.adjacency_edges
+            DELETE WHERE database_name = %(database)s
+            """,
+            parameters={"database": CH_DB},
+        )
 
         if not edges:
             return
 
         rows = [
             [
+                CH_DB,
                 edge.source_table,
                 edge.target_table,
                 ",".join(edge.source_columns),
@@ -126,6 +133,7 @@ class AdjacencyMatrixEngine:
             f"{META_DB}.adjacency_edges",
             rows,
             column_names=[
+                "database_name",
                 "source_table",
                 "target_table",
                 "source_columns",
@@ -208,7 +216,15 @@ class AdjacencyMatrixEngine:
         for edge in edges:
             src = f"{edge.source_table}.{edge.source_columns[0]}"
             tgt = f"{edge.target_table}.{edge.target_columns[0]}"
+            hybrid_score = AdjacencyMatrixEngine.format_score(edge.hybrid_score)
 
             logger.info(
-                f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {edge.hybrid_score:<10} | {edge.evidence}"
+                f"{src:<25} -> {tgt:<25} | ratio : {edge.join_success_ratio:<10} | hybrid score: {hybrid_score:<10} | {edge.evidence}"
             )
+
+    @staticmethod
+    def format_score(score: float | None) -> str:
+        if score is None:
+            return "-"
+
+        return f"{score:.6g}"

@@ -1,7 +1,10 @@
+from config.scoring import AGGREGATION_STABILITY_THRESHOLDS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import q_ident
+from core.naming import is_key_like_column
+from core.schema import normalize_clickhouse_type, q_ident
+from modeling.candidate_builder import DecisionModelCandidateBuilder
 from modeling.decision_model import DecisionModelCandidate
 
 logger = get_logger(__name__)
@@ -9,19 +12,35 @@ logger = get_logger(__name__)
 
 class AggregationStabilityValidator:
     """
-    Validates the structural integrity of decision models (Star/Snowflake schemas) 
-    by ensuring that joining a fact table to a dimension table does not alter 
+    Validate aggregation stability for decision model candidates.
+
+    The rule checks that joining a fact table to a dimension table does not alter
     the underlying data metrics (no fan-out/duplication, no data loss).
     """
 
     def __init__(self, db: ClickHouseManager):
         self.db = db
-        self.epsilon = 0.001
+        self.absolute_epsilon = AGGREGATION_STABILITY_THRESHOLDS["absolute_epsilon"]
+        self.relative_epsilon = AGGREGATION_STABILITY_THRESHOLDS["relative_epsilon"]
+
+    def validate_stored_candidates(self) -> list[dict]:
+        builder = DecisionModelCandidateBuilder(self.db)
+        candidates = builder.load_candidates()
+
+        if not candidates:
+            raise ValueError(
+                "No decision model candidates found. Run build-model-candidates first."
+            )
+
+        reports = []
+        for candidate in candidates:
+            reports.extend(self.check_stability(candidate))
+
+        return reports
 
     def check_stability(self, candidate: DecisionModelCandidate) -> list[dict]:
         """
-        Main orchestrator. Iterates through all valid fact-to-dimension relationships 
-        in a model candidate, dynamically selects test columns, and runs the stability checks.
+        Run stability checks for all fact-to-dimension edges in one candidate.
         """
         reports = []
 
@@ -84,8 +103,7 @@ class AggregationStabilityValidator:
         group_column: str,
     ) -> dict:
         """
-        Executes two SQL queries: one on the raw fact table (fine grain) and one 
-        aggregated through a JOIN (roll-up). Returns the raw metrics for comparison.
+        Compare raw fact metrics with metrics aggregated through one dimension.
         """
         join_conditions = [
             f"F.{q_ident(source_col)} = D.{q_ident(target_col)}"
@@ -168,8 +186,7 @@ class AggregationStabilityValidator:
         agg_max: float,
     ) -> dict:
         """
-        Calculates the deltas between fine and aggregated metrics.
-        Determines the stability status and generates error messages if thresholds are exceeded.
+        Build the persisted validation report for one fact-dimension edge.
         """
         delta_sum = abs(fine_sum - agg_sum)
         delta_count = abs(fine_count - agg_count)
@@ -179,15 +196,15 @@ class AggregationStabilityValidator:
 
         failed_rules = []
 
-        if delta_sum > self.epsilon:
+        if not self._is_close(fine_sum, agg_sum):
             failed_rules.append("SUM instability")
         if delta_count != 0:
             failed_rules.append("COUNT instability")
-        if delta_avg > self.epsilon:
+        if not self._is_close(fine_avg, agg_avg):
             failed_rules.append("AVG instability")
-        if delta_min > self.epsilon:
+        if not self._is_close(fine_min, agg_min):
             failed_rules.append("MIN instability")
-        if delta_max > self.epsilon:
+        if not self._is_close(fine_max, agg_max):
             failed_rules.append("MAX instability")
 
         is_stable = not failed_rules
@@ -223,9 +240,7 @@ class AggregationStabilityValidator:
 
     def _get_best_measure(self, table_name: str) -> str | None:
         """
-        Finds the most suitable numerical column in a fact table to be used as a measure.
-        Prefers columns with high variation coefficients (e.g., amounts, quantities) 
-        and explicitly ignores primary/foreign keys.
+        Find the best numeric measure candidate from stored column statistics.
         """
         sql = f"""
         SELECT column_name
@@ -253,16 +268,14 @@ class AggregationStabilityValidator:
 
         for row in rows:
             column_name = row[0]
-            if not self._is_key_like_column(column_name):
+            if not is_key_like_column(column_name):
                 return column_name
 
         return None
 
     def _get_best_dimension_grouping(self, table_name: str) -> str | None:
         """
-        Finds the ideal descriptive attribute in a dimension to group data by.
-        It avoids unique IDs and continuous measures, favoring categorical strings 
-        or dates with low entropy (e.g., Status, Month, Category).
+        Find the best dimension attribute to use as an aggregation level.
         """
         sql = f"""
         SELECT
@@ -302,7 +315,7 @@ class AggregationStabilityValidator:
             column_name = row[0]
             column_type = row[1]
 
-            if self._is_key_like_column(column_name):
+            if is_key_like_column(column_name):
                 continue
 
             if self._is_measure_like_type(column_type):
@@ -411,20 +424,16 @@ class AggregationStabilityValidator:
                     report["reason"],
                 )
 
-    @staticmethod
-    def _is_key_like_column(column_name: str) -> bool:
+    def _is_close(self, expected_value: float, observed_value: float) -> bool:
         """
-        Helper method to detect technical keys/IDs based on naming conventions.
+        Compare metrics with both absolute and relative tolerance.
         """
-        name = column_name.lower()
+        delta = abs(expected_value - observed_value)
+        scale = max(abs(expected_value), abs(observed_value), 1.0)
+
         return (
-            name.endswith("id")
-            or name.endswith("_id")
-            or name.endswith("key")
-            or name.endswith("_key")
-            or name.endswith("no")
-            or name.endswith("_no")
-            or "code" in name
+            delta <= self.absolute_epsilon
+            or (delta / scale) <= self.relative_epsilon
         )
 
     @staticmethod
@@ -432,5 +441,5 @@ class AggregationStabilityValidator:
         """
         Helper method to determine if a ClickHouse type represents continuous data (Floats/Decimals).
         """
-        normalized_type = column_type.lower()
+        normalized_type = normalize_clickhouse_type(column_type).lower()
         return "float" in normalized_type or "decimal" in normalized_type

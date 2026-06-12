@@ -147,6 +147,42 @@ def test_select_edges_for_star_keeps_only_direct_fact_edges() -> None:
     assert selected[0]["target_table"] == "customers"
 
 
+def test_select_edges_for_view_deduplicates_same_source_target_link() -> None:
+    generator = SQLViewGenerator(db=MagicMock())
+    model = CertifiedModel(
+        model_id="star_sales",
+        model_type="STAR",
+        status="VALID",
+        fact_tables=("sales",),
+    )
+    edges = [
+        {
+            "source_table": "sales",
+            "target_table": "customers",
+            "source_columns": "order_id",
+            "target_columns": "customer_id",
+            "join_success_ratio": 0.7,
+            "depth": 1,
+        },
+        {
+            "source_table": "sales",
+            "target_table": "customers",
+            "source_columns": "customer_id",
+            "target_columns": "customer_id",
+            "join_success_ratio": 1.0,
+            "depth": 1,
+        },
+    ]
+
+    selected = generator.select_edges_for_view(model, "sales", edges)
+    sql = generator.build_view_sql("sales", selected)
+
+    assert len(selected) == 1
+    assert selected[0]["source_columns"] == "customer_id"
+    assert sql.count("JOIN") == 1
+    assert sql.count(" AS d1") == 1
+
+
 def test_build_view_sql_joins_snowflake_edges_from_dimension_alias() -> None:
     generator = SQLViewGenerator(db=MagicMock())
 
