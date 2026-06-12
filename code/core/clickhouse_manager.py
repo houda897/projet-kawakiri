@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import clickhouse_connect
@@ -23,8 +24,8 @@ class ClickHouseManager:
     """
     Central access point to ClickHouse.
 
-    The manager keeps one connection and exposes query, command, and insert
-    methods used by all engines.
+    The manager keeps one ClickHouse client per thread (via threading.local)
+    and exposes query, command, and insert methods used by all engines.
     """
 
     _instance = None
@@ -36,26 +37,54 @@ class ClickHouseManager:
         self.password = CH_PASSWORD
         self.database = CH_DB
         self.meta_database = META_DB
-        self.client: Client | None = None
+        self._local = threading.local()
+        self._clients_lock = threading.Lock()
+        self._clients: list[Client] = []
         self.connect()
 
     def connect(self) -> Client:
-        """Open a ClickHouse connection and cache it. Returns the cached client on subsequent calls."""
-        if self.client is not None:
-            return self.client
+        """Return this thread's ClickHouse client, opening one on first use."""
+        client = getattr(self._local, "client", None)
+        if client is not None:
+            return client
 
         try:
-            self.client = clickhouse_connect.get_client(
+            client = clickhouse_connect.get_client(
                 host=self.host,
                 port=self.port,
                 username=self.user,
                 password=self.password,
             )
-            return self.client
-
         except Exception as exc:
             logger.error("ClickHouse connection failed: %s", exc)
             raise ConnectionError(f"ClickHouse connection failed: {exc}") from exc
+
+        self._local.client = client
+        with self._clients_lock:
+            self._clients.append(client)
+
+        return client
+
+    def close_all(self) -> None:
+        """
+        Close every per-thread ClickHouse client opened so far.
+
+        Call this from the calling thread once a parallel batch (e.g. a
+        ThreadPoolExecutor block) has finished: it closes the clients opened
+        by the worker threads as well as the caller's own client, which is
+        simply reopened lazily on its next query.
+        """
+        with self._clients_lock:
+            clients, self._clients = self._clients, []
+
+        if hasattr(self._local, "client"):
+            del self._local.client
+
+        for client in clients:
+            try:
+                client.close()
+            except Exception:
+                logger.warning("Failed to close ClickHouse client", exc_info=True)
 
     def query(self, sql: str, parameters: dict | None = None):
         """Execute a SELECT query and return the result object."""
