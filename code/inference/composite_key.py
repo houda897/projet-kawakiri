@@ -7,9 +7,8 @@ from config.scoring import PK_WEIGHTS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.schema import q_ident
-from stats.functional_dependency import check_functional_dependency
-
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
+from stats.functional_dependency import check_functional_dependency
 
 logger = get_logger(__name__)
 

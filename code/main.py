@@ -18,6 +18,7 @@ from stats.identifiability import IdentifiabilityEngine
 from validation.aggregation_stability_validator import AggregationStabilityValidator
 from validation.granularity_validator import GranularityValidator
 from validation.model_certification import ModelCertificationEngine
+from validation.semantic_homogeneity_validator import SemanticHomogeneityValidator
 from validation.structural_validator import StructuralValidator
 
 logger = get_logger(__name__)
@@ -190,6 +191,20 @@ def run_granularity_validation() -> None:
     validator.print_results(results)
 
 
+def run_semantic_homogeneity_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    roles = TableRoleEngine(db).load_roles()
+
+    if not roles:
+        raise ValueError("No table roles found. Run infer-table-roles first.")
+
+    validator = SemanticHomogeneityValidator(db)
+    results = validator.check_homogeneity(roles)
+    validator.store_homogeneity(results)
+    validator.print_homogeneity(results)
+
+
 def run_aggregation_stability_validation() -> None:
     db = get_manager()
     ensure_meta_schema(db)
@@ -233,6 +248,7 @@ def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
         ("rank-models", run_model_ranking),
         ("validate-structure", run_structural_validation),
         ("validate-granularity", run_granularity_validation),
+        ("validate-semantic-homogeneity", run_semantic_homogeneity_validation),
         ("validate-aggregation-stability", run_aggregation_stability_validation),
         ("certify-models", run_model_certification),
     ]
@@ -355,6 +371,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate deterministic fact granularity for stored model candidates",
     )
     granularity_validation_parser.set_defaults(handler=lambda args: run_granularity_validation())
+
+    semantic_homogeneity_parser = subparsers.add_parser(
+        "validate-semantic-homogeneity",
+        help="Validate semantic separation between fact measures and dimension attributes",
+    )
+    semantic_homogeneity_parser.set_defaults(
+        handler=lambda args: run_semantic_homogeneity_validation()
+    )
 
     aggregation_stability_parser = subparsers.add_parser(
         "validate-aggregation-stability",

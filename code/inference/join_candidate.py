@@ -9,7 +9,6 @@ from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import is_numeric_type, normalize_clickhouse_type, q_ident
-
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)

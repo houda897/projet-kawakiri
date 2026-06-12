@@ -6,7 +6,6 @@ from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
-
 from inference.composite_key import CompositeKeyEngine
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from inference.low_cardinality import LowCardinalityAnalyzer

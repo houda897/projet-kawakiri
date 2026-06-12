@@ -40,6 +40,10 @@ AGGREGATION_STABILITY_COLUMNS = (
     ("delta_max", "Float64"),
 )
 
+DECISION_MODEL_SCORE_COLUMNS = (
+    ("normalized_score", "Float64"),
+)
+
 
 def add_column_sql(table_name: str, column_name: str, column_type: str) -> str:
     return f"""
@@ -309,11 +313,16 @@ METADATA_TABLES = (
         database_name String,
         model_id String,
         parsimony_score Float64,
+        normalized_score Float64,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id)
     """,
+        migrations=tuple(
+            add_column_sql("decision_model_scores", column_name, column_type)
+            for column_name, column_type in DECISION_MODEL_SCORE_COLUMNS
+        ),
     ),
     MetadataTable(
         name="decision_model_validations",
