@@ -6,7 +6,6 @@ from typing import Protocol
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.schema import q_ident
-
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
 logger = get_logger(__name__)

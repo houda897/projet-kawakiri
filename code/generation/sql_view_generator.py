@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
-from core.meta import load_confirmed_adjacency_edges, load_table_role_map
 from core.naming import normalize_column_name as normalize_key_column_name
 from core.schema import q_ident
 
@@ -180,59 +179,6 @@ class SQLViewGenerator:
 
         return selected_edges
 
-    def load_table_roles(self) -> dict[str, str]:
-        roles = load_table_role_map(self.db, CH_DB)
-
-        if not roles:
-            raise ValueError(
-                "No table roles found. Run infer-table-roles before generate-sql-views."
-            )
-
-        return roles
-
-    def load_edges(self) -> list[dict]:
-        return [
-            {
-                "source_table": edge.source_table,
-                "target_table": edge.target_table,
-                "source_columns": edge.source_columns,
-                "target_columns": edge.target_columns,
-                "join_success_ratio": edge.join_success_ratio,
-            }
-            for edge in load_confirmed_adjacency_edges(self.db)
-        ]
-
-    def select_star_edges(
-        self,
-        fact_table: str,
-        edges: list[dict],
-        roles: dict[str, str],
-    ) -> list[dict]:
-        """
-        Keep only the best FACT -> DIMENSION edge for each dimension table.
-
-        The raw adjacency graph may contain several physical joins between the
-        same fact and dimension. For a star view, one clean join per dimension
-        is enough, so ties prefer column names that match exactly.
-        """
-
-        best_by_dimension: dict[str, dict] = {}
-
-        for edge in edges:
-            if edge["source_table"] != fact_table:
-                continue
-
-            if roles.get(edge["target_table"]) != "DIMENSION":
-                continue
-
-            target_table = edge["target_table"]
-            current = best_by_dimension.get(target_table)
-
-            if current is None or self.edge_rank(edge) > self.edge_rank(current):
-                best_by_dimension[target_table] = edge
-
-        return [best_by_dimension[target_table] for target_table in sorted(best_by_dimension)]
-
     def build_view_sql(
         self,
         fact_table: str,
@@ -240,9 +186,11 @@ class SQLViewGenerator:
     ) -> str:
         table_aliases = {fact_table: "f"}
 
-        select_lines = [
-            "    f.*",
-        ]
+        select_lines = self.build_select_lines(
+            table_name=fact_table,
+            table_alias="f",
+            column_alias_prefix="fact",
+        )
 
         join_lines = []
 
@@ -257,7 +205,13 @@ class SQLViewGenerator:
 
             dim_alias = f"d{len(table_aliases)}"
             table_aliases[dim_table] = dim_alias
-            select_lines.append(f"    {dim_alias}.*")
+            select_lines.extend(
+                self.build_select_lines(
+                    table_name=dim_table,
+                    table_alias=dim_alias,
+                    column_alias_prefix=dim_table.lower(),
+                )
+            )
 
             source_columns = self.split_columns(edge["source_columns"])
             target_columns = self.split_columns(edge["target_columns"])
@@ -280,6 +234,41 @@ class SQLViewGenerator:
         )
 
         return sql
+
+    def build_select_lines(
+        self,
+        table_name: str,
+        table_alias: str,
+        column_alias_prefix: str,
+    ) -> list[str]:
+        columns = self.load_table_columns(table_name)
+
+        if not columns:
+            raise ValueError(
+                f"No column profile found for table {table_name}. Run profile-basic before generate-sql-views."
+            )
+
+        return [
+            f"    {table_alias}.{q_ident(column)} AS {q_ident(f'{column_alias_prefix}_{column}')}"
+            for column in columns
+        ]
+
+    def load_table_columns(self, table_name: str) -> list[str]:
+        sql = f"""
+        SELECT column_name
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+          AND table_name = %(table)s
+          AND NOT startsWith(column_name, '__')
+        ORDER BY column_name
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "table": table_name},
+        ).result_rows
+
+        return [row[0] for row in rows]
 
     def create_views(self) -> list[SqlViewDefinition]:
         views = self.generate_views()

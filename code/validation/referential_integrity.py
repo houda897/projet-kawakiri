@@ -3,7 +3,6 @@ from __future__ import annotations
 from core.clickhouse_manager import CH_DB, ClickHouseManager
 from core.schema import q_ident
 from modeling.decision_model import DecisionModelCandidate, DecisionModelEdge
-
 from validation.structural_report import StructuralValidationIssue
 
 

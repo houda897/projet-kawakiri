@@ -256,7 +256,7 @@ class ModelCertificationEngine:
 
     def load_parsimony_scores(self) -> dict[str, float]:
         sql = f"""
-        SELECT model_id, parsimony_score
+        SELECT model_id, normalized_score
         FROM {q_ident(META_DB)}.decision_model_scores
         WHERE database_name = %(database)s
         """

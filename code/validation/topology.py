@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 
 from modeling.decision_model import DecisionModelCandidate, DecisionModelType
-
 from validation.structural_report import StructuralValidationIssue
 
 
