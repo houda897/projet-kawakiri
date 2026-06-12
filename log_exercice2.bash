@@ -402,3 +402,5 @@ Nombre de boucles : 805 | temps écoulé : 0:00:21.115668
 2026-06-12 09:42:34,868 - inference.join_candidate - INFO - AdventureWorks_Sales_Data_2022.OrderQuantity -> AdventureWorks_Territory_Lookup.SalesTerritoryKey | ratio=1.0
 2026-06-12 09:42:34,871 - inference.join_candidate - INFO - AdventureWorks_Sales_Data_2022.ProductKey -> AdventureWorks_Territory_Lookup.SalesTerritoryKey | ratio=1.0
 2026-06-12 09:42:34,871 - inference.join_candidate - INFO - AdventureWorks_Sales_Data_2022.TerritoryKey -> AdventureWorks_Territory_Lookup.SalesTerritoryKey | ratio=1.0
+
+--- *** --- adjacency --- *** --- time: 0:00:22.286167 (absolute: 0:00:22.286167)

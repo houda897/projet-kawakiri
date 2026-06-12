@@ -27,3 +27,5 @@ Nombre de boucles : 47 | temps écoulé : 0:00:01.134750
 2026-06-12 09:38:12,580 - inference.join_candidate - INFO - sales.product_id -> shipments.sale_id | ratio=1.0
 2026-06-12 09:38:12,580 - inference.join_candidate - INFO - sales.quantity -> shipments.sale_id | ratio=1.0
 2026-06-12 09:38:12,580 - inference.join_candidate - INFO - sales.sale_id -> shipments.sale_id | ratio=1.0
+
+--- *** --- adjacency --- *** --- time: 0:00:02.020707 (absolute: 0:00:02.020707)
