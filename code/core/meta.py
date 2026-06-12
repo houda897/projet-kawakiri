@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from core.clickhouse_manager import META_DB
+from core.clickhouse_manager import CH_DB, META_DB
 from core.schema import q_ident
 
 
@@ -13,21 +13,50 @@ class StoredAdjacencyEdge:
     join_success_ratio: float
 
 
-def ensure_meta_schema(client) -> None:
+@dataclass(frozen=True)
+class MetadataTable:
+    name: str
+    create_sql: str
+    computed: bool
+    migrations: tuple[str, ...] = ()
+
+
+AGGREGATION_STABILITY_COLUMNS = (
+    ("group_column", "String"),
+    ("fine_sum", "Float64"),
+    ("agg_sum", "Float64"),
+    ("delta_sum", "Float64"),
+    ("fine_count", "UInt64"),
+    ("agg_count", "UInt64"),
+    ("delta_count", "UInt64"),
+    ("fine_avg", "Float64"),
+    ("agg_avg", "Float64"),
+    ("delta_avg", "Float64"),
+    ("fine_min", "Float64"),
+    ("agg_min", "Float64"),
+    ("delta_min", "Float64"),
+    ("fine_max", "Float64"),
+    ("agg_max", "Float64"),
+    ("delta_max", "Float64"),
+)
+
+DECISION_MODEL_SCORE_COLUMNS = (
+    ("normalized_score", "Float64"),
+)
+
+
+def add_column_sql(table_name: str, column_name: str, column_type: str) -> str:
+    return f"""
+    ALTER TABLE {q_ident(META_DB)}.{q_ident(table_name)}
+    ADD COLUMN IF NOT EXISTS {q_ident(column_name)} {column_type}
     """
-    Create the metadata schema used by Kawakiri.
 
-    This function initializes the metadata database and the tables required to
-    trace CSV ingestion, store source-level diagnostics, preserve inferred
-    column schemas, and persist column profiling results. These tables make the
-    ingestion and profiling pipeline reproducible and auditable across runs.
-    """
 
-    client.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(META_DB)}")
-
-    # Store one row per ingestion attempt, including status and error message.
-    client.command(
-        f"""
+METADATA_TABLES = (
+    MetadataTable(
+        name="ingestion_runs",
+        computed=False,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_runs
         (
             source_path String,
@@ -42,12 +71,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """
-    )
-
-    # Store source-level diagnostics and whether human review is required.
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="ingestion_sources",
+        computed=False,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.ingestion_sources
         (
             run_id String,
@@ -62,12 +91,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
-        """
-    )
-
-    # Store inferred column metadata.
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="detected_columns",
+        computed=False,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.detected_columns
         (
             run_id String,
@@ -80,12 +109,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (run_id, target_database, target_table, column_name)
-        """
-    )
-
-    # Store column profiling results for each column.
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="column_profiles",
+        computed=True,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_profiles
         (
             database_name String,
@@ -104,12 +133,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, profiled_at)
-        """
-    )
-    # Store mathematically inferred simple primary-key candidates.
-
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="primary_key_candidates",
+        computed=True,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.primary_key_candidates
         (
             database_name String,
@@ -126,10 +155,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, confidence, column_name)
-        """
-    )
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="identifiability_scores",
+        computed=True,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.identifiability_scores
         (
             database_name String,
@@ -144,11 +175,12 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, created_at)
-        """
-    )
-
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="column_stats",
+        computed=True,
+        create_sql=f"""
         CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.column_stats
         (
             run_ts DateTime,
@@ -166,13 +198,15 @@ def ensure_meta_schema(client) -> None:
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, column_name, run_ts)
-        """
-    )
-
-    client.command(
-        f"""
+        """,
+    ),
+    MetadataTable(
+        name="adjacency_edges",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.adjacency_edges
     (
+        database_name String,
         source_table String,
         target_table String,
         source_columns String,
@@ -182,11 +216,14 @@ def ensure_meta_schema(client) -> None:
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
-    ORDER BY (source_table, target_table, created_at)
-    """
-    )
-    client.command(
-        f"""
+    ORDER BY (database_name, source_table, target_table, created_at)
+    """,
+        migrations=(add_column_sql("adjacency_edges", "database_name", "String"),),
+    ),
+    MetadataTable(
+        name="join_candidates",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.join_candidates
     (
         source_table String,
@@ -200,11 +237,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (source_table, target_table, source_column, target_column, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="table_roles",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.table_roles
     (
         database_name String,
@@ -223,11 +261,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, table_name, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="decision_model_candidates",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_candidates
     (
         database_name String,
@@ -243,11 +282,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_type, model_id, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="decision_model_edges",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_edges
     (
         database_name String,
@@ -262,25 +302,32 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, source_table, target_table, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="decision_model_scores",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_scores
     (
         database_name String,
         model_id String,
         parsimony_score Float64,
+        normalized_score Float64,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+        migrations=tuple(
+            add_column_sql("decision_model_scores", column_name, column_type)
+            for column_name, column_type in DECISION_MODEL_SCORE_COLUMNS
+        ),
+    ),
+    MetadataTable(
+        name="decision_model_validations",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validations
     (
         database_name String,
@@ -292,11 +339,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="decision_model_validation_issues",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.decision_model_validation_issues
     (
         database_name String,
@@ -311,11 +359,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, rule_name, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="semantic_homogeneity",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.semantic_homogeneity
     (
         database_name String,
@@ -331,11 +380,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, table_name)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="aggregation_stability",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.aggregation_stability
     (
         database_name String,
@@ -343,26 +393,44 @@ def ensure_meta_schema(client) -> None:
         fact_table String,
         dimension_table String,
         measure_column String,
+        group_column String,
+
         fine_sum Float64,
         agg_sum Float64,
         delta_sum Float64,
+
         fine_count UInt64,
         agg_count UInt64,
-        delta_count Int64,
+        delta_count UInt64,
+
         fine_avg Float64,
         agg_avg Float64,
         delta_avg Float64,
+
+        fine_min Float64,
+        agg_min Float64,
+        delta_min Float64,
+
+        fine_max Float64,
+        agg_max Float64,
+        delta_max Float64,
+
         is_stable Bool,
         reason String,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, fact_table, dimension_table)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+        migrations=tuple(
+            add_column_sql("aggregation_stability", column_name, column_type)
+            for column_name, column_type in AGGREGATION_STABILITY_COLUMNS
+        ),
+    ),
+    MetadataTable(
+        name="granularity_validations",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.granularity_validations
     (
         database_name String,
@@ -376,11 +444,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, fact_table, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="model_certifications",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certifications
     (
         database_name String,
@@ -394,11 +463,12 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, created_at)
-    """
-    )
-
-    client.command(
-        f"""
+    """,
+    ),
+    MetadataTable(
+        name="model_certification_issues",
+        computed=True,
+        create_sql=f"""
     CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.model_certification_issues
     (
         database_name String,
@@ -411,29 +481,26 @@ def ensure_meta_schema(client) -> None:
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, rule_name, created_at)
-    """
-    )
-
-
-COMPUTED_METADATA_TABLES = (
-    "column_profiles",
-    "column_stats",
-    "identifiability_scores",
-    "primary_key_candidates",
-    "join_candidates",
-    "adjacency_edges",
-    "table_roles",
-    "decision_model_candidates",
-    "decision_model_edges",
-    "decision_model_scores",
-    "decision_model_validations",
-    "decision_model_validation_issues",
-    "semantic_homogeneity",
-    "aggregation_stability",
-    "granularity_validations",
-    "model_certifications",
-    "model_certification_issues",
+    """,
+    ),
 )
+
+
+COMPUTED_METADATA_TABLES = tuple(table.name for table in METADATA_TABLES if table.computed)
+
+
+def ensure_meta_schema(client) -> None:
+    """
+    Create the metadata schema used by Kawakiri.
+    """
+
+    client.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(META_DB)}")
+
+    for table in METADATA_TABLES:
+        client.command(table.create_sql)
+
+        for migration_sql in table.migrations:
+            client.command(migration_sql)
 
 
 def clear_computed_metadata(db) -> None:
@@ -473,7 +540,10 @@ def load_table_role_map(db, database: str) -> dict[str, str]:
     return {row[0]: row[1] for row in rows}
 
 
-def load_confirmed_adjacency_edges(db) -> list[StoredAdjacencyEdge]:
+def load_confirmed_adjacency_edges(
+    db,
+    database: str = CH_DB,
+) -> list[StoredAdjacencyEdge]:
     """
     Load confirmed adjacency edges from metadata.
     """
@@ -486,10 +556,11 @@ def load_confirmed_adjacency_edges(db) -> list[StoredAdjacencyEdge]:
         target_columns,
         join_success_ratio
     FROM {q_ident(META_DB)}.adjacency_edges
-    WHERE evidence = 'CONFIRMED'
+    WHERE database_name = %(database)s
+      AND evidence = 'CONFIRMED'
     """
 
-    rows = db.query(sql).result_rows
+    rows = db.query(sql, parameters={"database": database}).result_rows
 
     return [
         StoredAdjacencyEdge(

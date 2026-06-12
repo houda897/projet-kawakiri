@@ -1,9 +1,11 @@
 import math
 
 from config.scoring import SEMANTIC_HOMOGENEITY_WEIGHTS
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
+from core.naming import is_key_like_column as is_key_like_column_name
+from core.schema import q_ident
 from inference.table_role import TableRoleCandidate
 
 logger = get_logger(__name__)
@@ -38,8 +40,8 @@ DESCRIPTIVE_KEYWORDS = {
 }
 
 
-class SemanticHomogeneityEngine:
-    def __init__(self, db: clickhouse_manager):
+class SemanticHomogeneityValidator:
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.database_name = CH_DB
         self.threshold = SEMANTIC_HOMOGENEITY_WEIGHTS["threshold"]
@@ -49,17 +51,7 @@ class SemanticHomogeneityEngine:
 
     def is_key_like_column(self, column_name: str) -> bool:
         """Detects key/identifier type technical columns to exclude from analyses"""
-
-        name = column_name.lower()
-        return (
-            name.endswith("id")
-            or name.endswith("_id")
-            or name.endswith("key")
-            or name.endswith("_key")
-            or name.endswith("no")
-            or name.endswith("_no")
-            or "code" in name
-        )
+        return is_key_like_column_name(column_name)
 
     def check_dimension_homogeneity(self, table_name: str) -> dict:
         """Proves that a dimension table doesn't contain fact measures"""
@@ -67,15 +59,15 @@ class SemanticHomogeneityEngine:
         sql = f"""
         SELECT
             cs.column_name, cp.column_type, cs.entropy_ratio, cs.variation_coefficient, cs.skewness_score
-        FROM {META_DB}.column_stats cs
-        JOIN {META_DB}.column_profiles cp
+        FROM {q_ident(META_DB)}.column_stats cs
+        JOIN {q_ident(META_DB)}.column_profiles cp
             ON cs.database_name = cp.database_name
             AND cs.table_name = cp.table_name
             AND cs.column_name = cp.column_name
         WHERE cs.database_name = %(db)s AND cs.table_name = %(table)s
         AND cs.run_ts = (
             SELECT max(run_ts)
-            FROM {META_DB}.column_stats
+            FROM {q_ident(META_DB)}.column_stats
             WHERE database_name = %(db)s
         )
         AND (
@@ -148,15 +140,15 @@ class SemanticHomogeneityEngine:
             cs.variation_coefficient,
             cp.null_ratio,
             cp.uniqueness_ratio
-        FROM {META_DB}.column_stats cs
-        JOIN {META_DB}.column_profiles cp
+        FROM {q_ident(META_DB)}.column_stats cs
+        JOIN {q_ident(META_DB)}.column_profiles cp
             ON cs.database_name = cp.database_name
             AND cs.table_name = cp.table_name
             AND cs.column_name = cp.column_name
         WHERE cs.database_name = %(db)s AND cs.table_name = %(table)s
         AND cs.run_ts = (
             SELECT max(run_ts)
-            FROM {META_DB}.column_stats
+            FROM {q_ident(META_DB)}.column_stats
             WHERE database_name = %(db)s
         )
         """
@@ -191,8 +183,13 @@ class SemanticHomogeneityEngine:
 
             entropy_val = entropy or 0.0
             cv_val = cv or 0.0
+            cv_bounded = min(abs(cv_val) / 2.0, 1.0)
+            fact_weights = self.w_entropy + self.w_cv
 
-            dim_score = (0.7 * (1.0 - entropy_val)) + (0.3 * math.exp(-cv_val))
+            dim_score = (
+                (self.w_entropy * (1.0 - entropy_val))
+                + (self.w_cv * math.exp(-cv_bounded))
+            ) / fact_weights
 
             if dim_score > self.threshold:
                 violations.append(
@@ -238,7 +235,7 @@ class SemanticHomogeneityEngine:
             elif role.role == "FACT":
                 reports.append(self.check_fact_homogeneity(role.table_name))
             else:
-                logger.warning(f"Error in table role : {role.role}")
+                logger.warning("Error in table role: %s", role.role)
         return reports
 
     def store_homogeneity(self, reports: list[dict]) -> None:
@@ -267,7 +264,7 @@ class SemanticHomogeneityEngine:
         ]
 
         self.db.insert(
-            f"{META_DB}.semantic_homogeneity",
+            f"{q_ident(META_DB)}.semantic_homogeneity",
             rows,
             column_names=[
                 "database_name",
@@ -295,5 +292,12 @@ class SemanticHomogeneityEngine:
                 truth = "False"
 
             logger.info(
-                f"Table name : {report['table_name']:<30} | role : {report['role']:<10} | is valid : {truth:<5} | homogeneity score : {report['homogeneity_score']:<4} | problematic columns = {problematic_columns:<30} | reason = {report['reason']}"
+                "Table name: %-30s | role: %-10s | is valid: %-5s | "
+                "homogeneity score: %-4s | problematic columns=%-30s | reason=%s",
+                report["table_name"],
+                report["role"],
+                truth,
+                report["homogeneity_score"],
+                problematic_columns,
+                report["reason"],
             )

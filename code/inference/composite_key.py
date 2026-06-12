@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from config.scoring import PK_WEIGHTS
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.schema import q_ident
+from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from stats.functional_dependency import check_functional_dependency
 
-from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
-
-if TYPE_CHECKING:
-    from inference.primary_key import PrimaryKeyCandidate
-
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class CompositeKeyColumnEvidence:
+    """
+    Column-level evidence used only during composite-key search.
+    """
+
+    database_name: str
+    table_name: str
+    column_name: str
+    column_type: str
+    rows: int
+    null_ratio: float
+    uniqueness_ratio: float
+    identifiability_score: float
+    confidence: float
 
 
 class CompositeKeyEngine:
@@ -22,7 +35,7 @@ class CompositeKeyEngine:
     Generate composite-key candidates for tables without a simple primary key.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.ranking_policy = KeyRankingPolicy()
 
@@ -124,12 +137,10 @@ class CompositeKeyEngine:
 
         return composite_candidates
 
-    def load_columns_for_composite_search(self) -> list[PrimaryKeyCandidate]:
+    def load_columns_for_composite_search(self) -> list[CompositeKeyColumnEvidence]:
         """
         Load column evidence used to build composite-key candidates.
         """
-
-        from inference.primary_key import PrimaryKeyCandidate
 
         sql = f"""
         SELECT
@@ -162,7 +173,7 @@ class CompositeKeyEngine:
             )
 
             columns.append(
-                PrimaryKeyCandidate(
+                CompositeKeyColumnEvidence(
                     database_name=row[0],
                     table_name=row[1],
                     column_name=row[2],
@@ -172,7 +183,6 @@ class CompositeKeyEngine:
                     uniqueness_ratio=row[6],
                     identifiability_score=row[7],
                     confidence=confidence,
-                    reason="column_evidence_for_composite_key_search",
                 )
             )
 

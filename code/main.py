@@ -15,8 +15,10 @@ from profiling.basic_profile import ProfileEngine
 from reporting.certification_report import CertificationReportExporter
 from semantic.semantic_engine import SemanticEngine
 from stats.identifiability import IdentifiabilityEngine
+from validation.aggregation_stability_validator import AggregationStabilityValidator
 from validation.granularity_validator import GranularityValidator
 from validation.model_certification import ModelCertificationEngine
+from validation.semantic_homogeneity_validator import SemanticHomogeneityValidator
 from validation.structural_validator import StructuralValidator
 from modeling.model_ranking import ModelRanking
 from colorama import Fore,Style,init
@@ -161,11 +163,11 @@ def run_adjacency() -> None:
 
 
 def run_table_roles() -> None:
-    from semantic.semantic_homogeneity_engine import SemanticHomogeneityEngine
+    from validation.semantic_homogeneity_validator import SemanticHomogeneityValidator
     db = get_manager()
     ensure_meta_schema(db)
     engine = TableRoleEngine(db)
-    hom_engine = SemanticHomogeneityEngine(db)
+    hom_engine = SemanticHomogeneityValidator(db)
                 
     roles = engine.infer_roles()
     engine.store_roles(roles)
@@ -174,6 +176,7 @@ def run_table_roles() -> None:
     reported_roles = hom_engine.check_homogeneity(roles)
     hom_engine.store_homogeneity(reported_roles)
     hom_engine.print_homogeneity(reported_roles)
+
 
 def run_sql_view_generation() -> None:
     db = get_manager()
@@ -184,7 +187,7 @@ def run_sql_view_generation() -> None:
 
 def run_model_candidate_building() -> None:
     from modeling.model_ranking import ModelRanking
-    from validation.aggregation_stability_engine import AggregationStabilityEngine
+    from validation.aggregation_stability_validator import AggregationStabilityValidator
     db = get_manager()
     ensure_meta_schema(db)
 
@@ -202,7 +205,7 @@ def run_model_candidate_building() -> None:
 
     # Vérification des aggrégations
     top_candidate, _ =  ranked_candidates[0]
-    stability_engine = AggregationStabilityEngine(db)
+    stability_engine = AggregationStabilityValidator(db)
     stability_reports = stability_engine.check_stability(top_candidate)
 
     stability_engine.store_stability(stability_reports)
@@ -242,6 +245,29 @@ def run_granularity_validation() -> None:
     validator.print_results(results)
 
 
+def run_semantic_homogeneity_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    roles = TableRoleEngine(db).load_roles()
+
+    if not roles:
+        raise ValueError("No table roles found. Run infer-table-roles first.")
+
+    validator = SemanticHomogeneityValidator(db)
+    results = validator.check_homogeneity(roles)
+    validator.store_homogeneity(results)
+    validator.print_homogeneity(results)
+
+
+def run_aggregation_stability_validation() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    validator = AggregationStabilityValidator(db)
+    results = validator.validate_stored_candidates()
+    validator.store_stability(results)
+    validator.print_stability(results)
+
+
 def run_model_certification() -> None:
     db = get_manager()
     ensure_meta_schema(db)
@@ -262,9 +288,6 @@ def run_certification_report_export(path: str) -> None:
 def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
     """
     Run the full available pipeline from CSV ingestion to certification report.
-
-    Semantic homogeneity and aggregation stability are intentionally not called
-    here yet because these validators are owned by separate work in progress.
     """
 
     steps = [
@@ -279,6 +302,8 @@ def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
         ("rank-models", run_model_ranking),
         ("validate-structure", run_structural_validation),
         ("validate-granularity", run_granularity_validation),
+        ("validate-semantic-homogeneity", run_semantic_homogeneity_validation),
+        ("validate-aggregation-stability", run_aggregation_stability_validation),
         ("certify-models", run_model_certification),
     ]
 
@@ -400,6 +425,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate deterministic fact granularity for stored model candidates",
     )
     granularity_validation_parser.set_defaults(handler=lambda args: run_granularity_validation())
+
+    semantic_homogeneity_parser = subparsers.add_parser(
+        "validate-semantic-homogeneity",
+        help="Validate semantic separation between fact measures and dimension attributes",
+    )
+    semantic_homogeneity_parser.set_defaults(
+        handler=lambda args: run_semantic_homogeneity_validation()
+    )
+
+    aggregation_stability_parser = subparsers.add_parser(
+        "validate-aggregation-stability",
+        help="Validate that measures remain stable after aggregation through dimensions",
+    )
+    aggregation_stability_parser.set_defaults(
+        handler=lambda args: run_aggregation_stability_validation()
+    )
 
     model_certification_parser = subparsers.add_parser(
         "certify-models",

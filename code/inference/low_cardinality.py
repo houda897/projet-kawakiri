@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.schema import q_ident
 
 
@@ -32,7 +32,7 @@ class LowCardinalityAnalyzer:
     Detect columns that behave like categorical attributes.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def find_columns(

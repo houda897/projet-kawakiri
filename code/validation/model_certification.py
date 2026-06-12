@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from config.scoring import CERTIFICATION_SCORE_WEIGHTS
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
@@ -36,7 +37,7 @@ class ModelCertificationEngine:
     Combine ranking and validation results into a final model certification.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.candidate_builder = DecisionModelCandidateBuilder(db)
 
@@ -255,7 +256,7 @@ class ModelCertificationEngine:
 
     def load_parsimony_scores(self) -> dict[str, float]:
         sql = f"""
-        SELECT model_id, parsimony_score
+        SELECT model_id, normalized_score
         FROM {q_ident(META_DB)}.decision_model_scores
         WHERE database_name = %(database)s
         """
@@ -334,6 +335,7 @@ class ModelCertificationEngine:
             fact_table,
             dimension_table,
             measure_column,
+            group_column,
             is_stable,
             reason
         FROM {q_ident(META_DB)}.aggregation_stability
@@ -349,8 +351,9 @@ class ModelCertificationEngine:
                     "fact_table": row[1],
                     "dimension_table": row[2],
                     "measure_column": row[3],
-                    "is_stable": bool(row[4]),
-                    "reason": row[5],
+                    "group_column": row[4],
+                    "is_stable": bool(row[5]),
+                    "reason": row[6],
                 }
             )
 
@@ -368,15 +371,15 @@ class ModelCertificationEngine:
 
     @staticmethod
     def calculate_certification_score(issues: list[CertificationIssue]) -> float:
-        score = 100.0
+        score = CERTIFICATION_SCORE_WEIGHTS["initial_score"]
 
         for issue in issues:
             if issue.severity == "ERROR":
-                score -= 35.0
+                score -= CERTIFICATION_SCORE_WEIGHTS["error_penalty"]
             elif issue.severity == "WARNING":
-                score -= 10.0
+                score -= CERTIFICATION_SCORE_WEIGHTS["warning_penalty"]
 
-        return max(0.0, round(score, 2))
+        return max(CERTIFICATION_SCORE_WEIGHTS["minimum_score"], round(score, 2))
 
     @staticmethod
     def print_results(results: list[ModelCertificationResult]) -> None:

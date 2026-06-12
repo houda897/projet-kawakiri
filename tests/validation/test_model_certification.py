@@ -183,3 +183,37 @@ def test_store_results_persists_certifications_and_issues() -> None:
     assert db.insert.call_count == 2
     assert db.insert.call_args_list[0][0][0].endswith(".model_certifications")
     assert db.insert.call_args_list[1][0][0].endswith(".model_certification_issues")
+
+
+def test_loaders_read_all_validation_result_types() -> None:
+    db = MagicMock()
+    db.query.side_effect = [
+        MagicMock(result_rows=[("star_sales", 0.91)]),
+        MagicMock(result_rows=[("star_sales", True, 0, 0)]),
+        MagicMock(result_rows=[("star_sales", "sales", "customer_id", 0, True, "ok")]),
+        MagicMock(result_rows=[("sales", True, 1.0, 0, "ok")]),
+        MagicMock(
+            result_rows=[
+                (
+                    "star_sales",
+                    "sales",
+                    "customers",
+                    "amount",
+                    "country",
+                    True,
+                    "Stable",
+                )
+            ]
+        ),
+    ]
+    engine = ModelCertificationEngine(db)
+
+    assert engine.load_parsimony_scores() == {"star_sales": 0.91}
+    assert engine.load_structural_results()["star_sales"]["is_valid"] is True
+    assert engine.load_granularity_results()["star_sales"][0]["grain_columns"] == "customer_id"
+    assert engine.load_homogeneity_results()["sales"]["homogeneity_score"] == 1.0
+
+    stability = engine.load_stability_results()["star_sales"][0]
+    assert stability["dimension_table"] == "customers"
+    assert stability["group_column"] == "country"
+    assert stability["is_stable"] is True

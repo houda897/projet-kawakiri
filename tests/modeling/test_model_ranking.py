@@ -81,5 +81,14 @@ class TestModelRanking(unittest.TestCase):
 
         self.assertEqual(len(ranked), 2)
         self.assertEqual(ranked[0][0].model_id, "model_2")
+        self.assertEqual(ranked[0][1], 1.0)
+        self.assertEqual(ranked[1][1], 0.0)
         self.assertTrue(self.mock_db.insert.called)
+        self.mock_db.insert.assert_called_once()
+        assert self.mock_db.insert.call_args.kwargs["column_names"] == [
+            "database_name",
+            "model_id",
+            "parsimony_score",
+            "normalized_score",
+        ]
         mock_clear.assert_called()

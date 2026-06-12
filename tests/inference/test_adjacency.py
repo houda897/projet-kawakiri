@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock
+
+from core.clickhouse_manager import CH_DB
 from inference.adjacency import AdjacencyEdge, AdjacencyMatrixEngine
 from inference.join_candidate import JoinPrimaryKeyCandidate
 
@@ -53,3 +56,27 @@ def test_build_matrix_keeps_max_score() -> None:
     assert matrix["sales"]["customers"] == 0.99
     assert len(matrix["sales"]) == 2
     assert "weak_dim" not in matrix["sales"]
+
+
+def test_print_edges_accepts_missing_hybrid_score() -> None:
+    edges = [
+        AdjacencyEdge("sales", "customers", ("customer_id",), ("id",), 0.99, None, "CONFIRMED"),
+    ]
+
+    AdjacencyMatrixEngine.print_edges(edges)
+
+
+def test_store_edges_scopes_rows_by_database() -> None:
+    db = MagicMock()
+    engine = AdjacencyMatrixEngine(db=db, semantic_engine=IdentitySemanticEngine())
+    edges = [
+        AdjacencyEdge("sales", "customers", ("customer_id",), ("id",), 0.99, None, "CONFIRMED"),
+    ]
+
+    engine.store_edges(edges)
+
+    assert db.command.call_args.kwargs["parameters"] == {"database": CH_DB}
+    inserted_rows = db.insert.call_args.args[1]
+    column_names = db.insert.call_args.kwargs["column_names"]
+    assert inserted_rows[0][0] == CH_DB
+    assert column_names[0] == "database_name"

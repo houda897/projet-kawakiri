@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.schema import q_ident
-
 from inference.composite_key import CompositeKeyEngine
 from inference.key_ranking import KeyRankingPolicy, RankedKeyCandidate
 from inference.low_cardinality import LowCardinalityAnalyzer
@@ -40,7 +39,7 @@ class PrimaryKeyEngine:
     decision. Other components provide evidence used for ranking.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
         self.low_cardinality_analyzer = LowCardinalityAnalyzer(db)
         self.ranking_policy = KeyRankingPolicy()

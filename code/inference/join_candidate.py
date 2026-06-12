@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import itertools
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from config.scoring import EVALUATE_CANDIDATES
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import is_numeric_type, q_ident
-
+from core.schema import is_numeric_type, normalize_clickhouse_type, q_ident
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -47,7 +47,7 @@ class JoinEngine:
     Evaluate physical joins between profiled columns and primary-key candidates.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def _to_q_ident_list(self, columns_str: str) -> str:
@@ -197,50 +197,38 @@ class JoinEngine:
         ),
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
+        max_workers: int | None = None,
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
 
+        from datetime import datetime
+        from colorama import Fore, Style
+
         if source_columns is None:
             source_columns = self.load_source_columns()
-
         stats = self.load_column_stats()
         source_columns = self.prefilter_source_columns(
             primary_keys=primary_keys,
             source_columns=source_columns,
             stats=stats,
         )
-
         cols_by_table: dict[str, list[SourceColumn]] = defaultdict(list)
         cols_by_table_type: dict[str, dict[str, list[SourceColumn]]] = defaultdict(
             lambda: defaultdict(list)
         )
-
-        from colorama import Fore,Style,init
-        from datetime import datetime
-
-        init()
-        iter = 0
-        time = datetime.now()
-
         for col in source_columns:
             clean_type = self._clean_type(col.column_type)
             cols_by_table[col.table_name].append(col)
             cols_by_table_type[col.table_name][clean_type].append(col)
 
-        candidates = []
-
+        jobs: list[tuple[str, str, PrimaryKeyCandidate]] = []
         for primary_key in primary_keys:
-
-            iter += 1
-            elapsed_time = datetime.now() - time
-            print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
 
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
-
             if is_composite and len(target_cols) > max_composite_cols:
                 logger.info(
                     "[SKIP] composite PK is too long (%s cols): %s.%s",
@@ -249,32 +237,22 @@ class JoinEngine:
                     primary_key.column_name,
                 )
                 continue
-
             for table_name in cols_by_table:
 
-                iter += 1
-                elapsed_time = datetime.now() - time
-                print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
-                
                 if table_name == primary_key.table_name:
                     continue
-
                 valid_source_combos = []
-
                 if not is_composite:
                     for src in cols_by_table_type[table_name].get(target_types[0], []):
                         if not self.should_skip_pair((src,), primary_key):
                             valid_source_combos.append(src.column_name)
-
                 else:
                     pools = [
                         cols_by_table_type[table_name].get(target_type, [])
                         for target_type in target_types
                     ]
-
                     if any(len(pool) == 0 for pool in pools):
                         continue
-
                     for combo in itertools.product(*pools):
 
                         iter += 1
@@ -283,27 +261,32 @@ class JoinEngine:
 
                         if len({col.column_name for col in combo}) != len(combo):
                             continue
-
                         if self.should_skip_pair(combo, primary_key):
                             continue
-
                         valid_source_combos.append(", ".join(col.column_name for col in combo))
-
                 for combo_str in valid_source_combos:
+                    jobs.append((table_name, combo_str, primary_key))
 
-                    iter += 1
-                    elapsed_time = datetime.now() - time
-                    print(Fore.RED + f'\rNombre de boucles : {iter} | temps écoulé : {elapsed_time}', end='' + Style.RESET_ALL)
+        if not jobs:
+            return []
 
-                    result = self.evaluate_join_to_primary_key(
-                        source_table=table_name,
-                        source_column=combo_str,
-                        primary_key=primary_key,
-                        limit_rows=limit_rows,
-                    )
+        def _evaluate(job: tuple[str, str, PrimaryKeyCandidate]) -> JoinPrimaryKeyCandidate:
+            table_name, combo_str, primary_key = job
+            return self.evaluate_join_to_primary_key(
+                source_table=table_name,
+                source_column=combo_str,
+                primary_key=primary_key,
+                limit_rows=limit_rows,
+            )
 
+        candidates: list[JoinPrimaryKeyCandidate] = []
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for result in executor.map(_evaluate, jobs):
                     if result.join_success_ratio >= min_success_ratio:
                         candidates.append(result)
+        finally:
+            self.db.close_all()
 
         return candidates
 
@@ -508,8 +491,8 @@ class JoinEngine:
 
     @staticmethod
     def _clean_type(ch_type: str) -> str:
-        """Strip Nullable() wrapper to compare base physical types."""
-        return ch_type.removeprefix("Nullable(").removesuffix(")")
+        """Normalize ClickHouse wrappers before comparing physical types."""
+        return normalize_clickhouse_type(ch_type)
 
     @staticmethod
     def _has_range_values(*values: object) -> bool:

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.schema import q_ident
 
 EXPECTED_RULES = (
@@ -21,7 +21,7 @@ class CertificationReportExporter:
     Export stored model certification results as a final JSON report.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def build_report(self) -> dict:

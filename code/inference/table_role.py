@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.clickhouse_manager import CH_DB, META_DB, clickhouse_manager
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table, load_confirmed_adjacency_edges
 from core.schema import q_ident
@@ -38,7 +38,7 @@ class TableRoleEngine:
     columns, and can also point to other dimensions in a snowflake schema.
     """
 
-    def __init__(self, db: clickhouse_manager):
+    def __init__(self, db: ClickHouseManager):
         self.db = db
 
     def infer_roles(self) -> list[TableRoleCandidate]:

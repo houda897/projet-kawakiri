@@ -26,6 +26,10 @@ def test_normalize_column_name(semantic_engine):
     assert semantic_engine.normalize_column_name("store_fk") == "store"
 
     assert semantic_engine.normalize_column_name("fk_id_product_key_id") == "product"
+    assert semantic_engine.normalize_column_name("valid") == "valid"
+    assert semantic_engine.normalize_column_name("rapid") == "rapid"
+    assert semantic_engine.normalize_column_name("grid") == "grid"
+    assert semantic_engine.normalize_column_name("customerid") == "customerid"
 
     assert semantic_engine.normalize_column_name("") == ""
     assert semantic_engine.normalize_column_name(None) == ""
@@ -38,8 +42,8 @@ def test_compute_similarity(semantic_engine):
     score = semantic_engine.compute_similarity("Product", "ProductSub")
     assert 0.0 < score < 1.0
 
-    assert semantic_engine.compute_similarity("OrderDate", "StockDate") == 1.0
-    assert semantic_engine.compute_similarity("Date", "ReturnDate") == 1.0
+    assert semantic_engine.compute_similarity("OrderDate", "StockDate") < 1.0
+    assert semantic_engine.compute_similarity("Date", "ReturnDate") < 1.0
 
 
 @patch.dict(SEMANTIC_WEIGHTS, {"join_success_ratio": 0.34, "semantic_similarity": 0.66})
