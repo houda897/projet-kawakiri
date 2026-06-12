@@ -5,7 +5,6 @@ from core.logger import get_logger
 from core.meta import clear_metadata_table
 from modeling.candidate_builder import DecisionModelCandidateBuilder
 from modeling.decision_model import DecisionModelCandidate
-
 from validation.referential_integrity import ReferentialIntegrityValidator
 from validation.structural_report import (
     StructuralValidationIssue,

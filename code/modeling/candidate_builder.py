@@ -10,7 +10,6 @@ from core.meta import (
     load_table_role_map,
 )
 from core.schema import q_ident
-
 from modeling.decision_model import (
     DecisionModelCandidate,
     DecisionModelEdge,

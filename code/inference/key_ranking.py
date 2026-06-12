@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from config.scoring import PK_WEIGHTS
 from core.schema import is_numeric_type as is_clickhouse_numeric_type
+from core.schema import normalize_clickhouse_type
 
 
 @dataclass
@@ -144,4 +145,4 @@ class KeyRankingPolicy:
 
     @staticmethod
     def normalize_type(column_type: str) -> str:
-        return column_type.removeprefix("Nullable(").removesuffix(")")
+        return normalize_clickhouse_type(column_type)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 
 from modeling.decision_model import DecisionModelCandidate, DecisionModelType
-
 from validation.structural_report import StructuralValidationIssue
 
 
@@ -112,31 +111,39 @@ class TopologyValidator:
     @staticmethod
     def detect_cycles(graph: dict[str, list[str]]) -> list[tuple[str, ...]]:
         cycles: set[tuple[str, ...]] = set()
-        visiting: set[str] = set()
         visited: set[str] = set()
-        path: list[str] = []
 
-        def visit(node: str) -> None:
-            if node in visiting:
-                cycle_start = path.index(node)
-                cycle = path[cycle_start:] + [node]
-                cycles.add(tuple(cycle))
-                return
+        for start_node in graph:
+            if start_node in visited:
+                continue
 
-            if node in visited:
-                return
+            stack = [(start_node, iter(graph.get(start_node, [])))]
+            path = [start_node]
+            visiting = {start_node}
 
-            visiting.add(node)
-            path.append(node)
+            while stack:
+                current_node, children = stack[-1]
 
-            for next_node in graph.get(node, []):
-                visit(next_node)
+                try:
+                    next_node = next(children)
+                except StopIteration:
+                    stack.pop()
+                    path.pop()
+                    visiting.remove(current_node)
+                    visited.add(current_node)
+                    continue
 
-            path.pop()
-            visiting.remove(node)
-            visited.add(node)
+                if next_node in visiting:
+                    cycle_start = path.index(next_node)
+                    cycle = path[cycle_start:] + [next_node]
+                    cycles.add(tuple(cycle))
+                    continue
 
-        for node in graph:
-            visit(node)
+                if next_node in visited:
+                    continue
+
+                visiting.add(next_node)
+                path.append(next_node)
+                stack.append((next_node, iter(graph.get(next_node, []))))
 
         return sorted(cycles)

@@ -4,6 +4,7 @@ from config.scoring import SEMANTIC_HOMOGENEITY_WEIGHTS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
+from core.naming import is_key_like_column as is_key_like_column_name
 from core.schema import q_ident
 from inference.table_role import TableRoleCandidate
 
@@ -50,17 +51,7 @@ class SemanticHomogeneityValidator:
 
     def is_key_like_column(self, column_name: str) -> bool:
         """Detects key/identifier type technical columns to exclude from analyses"""
-
-        name = column_name.lower()
-        return (
-            name.endswith("id")
-            or name.endswith("_id")
-            or name.endswith("key")
-            or name.endswith("_key")
-            or name.endswith("no")
-            or name.endswith("_no")
-            or "code" in name
-        )
+        return is_key_like_column_name(column_name)
 
     def check_dimension_homogeneity(self, table_name: str) -> dict:
         """Proves that a dimension table doesn't contain fact measures"""
@@ -192,8 +183,13 @@ class SemanticHomogeneityValidator:
 
             entropy_val = entropy or 0.0
             cv_val = cv or 0.0
+            cv_bounded = min(abs(cv_val) / 2.0, 1.0)
+            fact_weights = self.w_entropy + self.w_cv
 
-            dim_score = (0.7 * (1.0 - entropy_val)) + (0.3 * math.exp(-cv_val))
+            dim_score = (
+                (self.w_entropy * (1.0 - entropy_val))
+                + (self.w_cv * math.exp(-cv_bounded))
+            ) / fact_weights
 
             if dim_score > self.threshold:
                 violations.append(

@@ -75,6 +75,13 @@ def test_load_model_edges_reads_only_the_selected_model_edges() -> None:
 def test_generate_views_uses_the_best_certified_model() -> None:
     db = MagicMock()
     generator = SQLViewGenerator(db)
+    generator.load_table_columns = MagicMock(
+        side_effect=lambda table: {
+            "sales": ["sale_id", "customer_id"],
+            "customers": ["customer_id", "country_id"],
+            "countries": ["country_id", "country_name"],
+        }[table]
+    )
     generator.load_best_certified_model = MagicMock(
         return_value=CertifiedModel(
             model_id="snowflake_sales",
@@ -147,8 +154,61 @@ def test_select_edges_for_star_keeps_only_direct_fact_edges() -> None:
     assert selected[0]["target_table"] == "customers"
 
 
+def test_select_edges_for_view_deduplicates_same_source_target_link() -> None:
+    generator = SQLViewGenerator(db=MagicMock())
+    generator.load_table_columns = MagicMock(
+        side_effect=lambda table: {
+            "sales": ["sale_id", "customer_id"],
+            "customers": ["customer_id", "name"],
+        }[table]
+    )
+    model = CertifiedModel(
+        model_id="star_sales",
+        model_type="STAR",
+        status="VALID",
+        fact_tables=("sales",),
+    )
+    edges = [
+        {
+            "source_table": "sales",
+            "target_table": "customers",
+            "source_columns": "order_id",
+            "target_columns": "customer_id",
+            "join_success_ratio": 0.7,
+            "depth": 1,
+        },
+        {
+            "source_table": "sales",
+            "target_table": "customers",
+            "source_columns": "customer_id",
+            "target_columns": "customer_id",
+            "join_success_ratio": 1.0,
+            "depth": 1,
+        },
+    ]
+
+    selected = generator.select_edges_for_view(model, "sales", edges)
+    sql = generator.build_view_sql("sales", selected)
+
+    assert len(selected) == 1
+    assert selected[0]["source_columns"] == "customer_id"
+    assert sql.count("JOIN") == 1
+    assert sql.count(" AS d1") == 1
+    assert "f.*" not in sql
+    assert "d1.*" not in sql
+    assert "f.`sale_id` AS `fact_sale_id`" in sql
+    assert "d1.`name` AS `customers_name`" in sql
+
+
 def test_build_view_sql_joins_snowflake_edges_from_dimension_alias() -> None:
     generator = SQLViewGenerator(db=MagicMock())
+    generator.load_table_columns = MagicMock(
+        side_effect=lambda table: {
+            "sales": ["sale_id", "customer_id"],
+            "customers": ["customer_id", "country_id"],
+            "countries": ["country_id", "country_name"],
+        }[table]
+    )
 
     sql = generator.build_view_sql(
         fact_table="sales",
@@ -178,34 +238,43 @@ def test_build_view_sql_joins_snowflake_edges_from_dimension_alias() -> None:
     assert "d1.`country_id` = d2.`country_id`" in sql
 
 
-def test_load_table_roles_reads_stored_metadata() -> None:
-    db = MagicMock()
-    db.query.return_value = SimpleNamespace(
-        result_rows=[
-            ("sales", "FACT"),
-            ("customers", "DIMENSION"),
-        ]
+def test_build_view_sql_aliases_duplicate_column_names() -> None:
+    generator = SQLViewGenerator(db=MagicMock())
+    generator.load_table_columns = MagicMock(
+        side_effect=lambda table: {
+            "sales": ["id", "customer_id"],
+            "customers": ["id", "customer_id"],
+        }[table]
     )
-    generator = SQLViewGenerator(db)
 
-    roles = generator.load_table_roles()
+    sql = generator.build_view_sql(
+        fact_table="sales",
+        edges=[
+            {
+                "source_table": "sales",
+                "target_table": "customers",
+                "source_columns": "customer_id",
+                "target_columns": "customer_id",
+                "join_success_ratio": 1.0,
+                "depth": 1,
+            }
+        ],
+    )
 
-    assert roles == {
-        "sales": "FACT",
-        "customers": "DIMENSION",
-    }
-    sql = db.query.call_args[0][0]
-    assert "table_roles" in sql
+    assert "f.`id` AS `fact_id`" in sql
+    assert "d1.`id` AS `customers_id`" in sql
+    assert "f.*" not in sql
+    assert "d1.*" not in sql
 
 
-def test_load_table_roles_requires_stored_roles() -> None:
+def test_build_view_sql_requires_profiled_columns() -> None:
     db = MagicMock()
     db.query.return_value = SimpleNamespace(result_rows=[])
     generator = SQLViewGenerator(db)
 
     try:
-        generator.load_table_roles()
+        generator.build_view_sql("sales", [])
     except ValueError as exc:
-        assert "Run infer-table-roles" in str(exc)
+        assert "Run profile-basic" in str(exc)
     else:
-        raise AssertionError("Expected ValueError when stored table roles are missing")
+        raise AssertionError("Expected ValueError when table columns are missing")

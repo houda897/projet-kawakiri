@@ -82,3 +82,11 @@ def test_topology_rejects_cycles() -> None:
     issues = TopologyValidator().validate(model)
 
     assert "NO_CYCLE" in {issue.rule_name for issue in issues}
+
+
+def test_cycle_detection_handles_large_acyclic_graph_without_recursion_error() -> None:
+    graph = {f"node_{index}": [f"node_{index + 1}"] for index in range(1_500)}
+
+    cycles = TopologyValidator.detect_cycles(graph)
+
+    assert cycles == []
