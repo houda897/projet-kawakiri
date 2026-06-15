@@ -78,6 +78,7 @@ def test_store_scores(engine, mock_db):
 
     engine.store_scores(dummy_results)
 
+    mock_db.command.assert_called_once()
     mock_db.insert.assert_called_once()
 
     args, kwargs = mock_db.insert.call_args
@@ -91,6 +92,7 @@ def test_store_scores(engine, mock_db):
 
 
 def test_store_scores_empty(engine, mock_db):
-    """Test that store_scores does not attempt to insert if the results list is empty."""
+    """Test that store_scores clears old data but does not insert if the results list is empty."""
     engine.store_scores([])
+    mock_db.command.assert_called_once()
     mock_db.insert.assert_not_called()

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from config.scoring import IDENTIFIABILITY_THRESHOLDS, IDENTIFIABILITY_WEIGHTS
 from core.clickhouse_manager import META_DB, ClickHouseManager
 from core.logger import get_logger
+from core.meta import clear_metadata_table
 from core.schema import q_ident
 
 logger = get_logger(__name__)
@@ -151,6 +152,8 @@ class IdentifiabilityEngine:
         Does nothing if the list is empty. Scores are later read by
         PrimaryKeyEngine to rank key candidates.
         """
+        clear_metadata_table(self.db, "identifiability_scores")
+
         if not results:
             return
 

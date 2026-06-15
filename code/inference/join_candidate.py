@@ -197,14 +197,11 @@ class JoinEngine:
         ),
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
-        max_workers: int | None = None,
+        max_workers: int | None = EVALUATE_CANDIDATES.get("JOIN_MAX_WORKERS", 4),
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
-
-        from datetime import datetime
-        from colorama import Fore, Style
 
         if source_columns is None:
             source_columns = self.load_source_columns()
