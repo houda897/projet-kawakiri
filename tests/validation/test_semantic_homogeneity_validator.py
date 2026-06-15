@@ -59,3 +59,23 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         self.assertEqual(report["issue_count"], 2)
         self.assertTrue("customer_name" in report["descriptive_like_columns"])
         self.assertTrue("bad_flag" in report["descriptive_like_columns"])
+
+    def test_dimension_query_filters_latest_stats_by_table(self):
+        mock_result = MagicMock()
+        mock_result.result_rows = []
+        self.mock_db.query.return_value = mock_result
+
+        self.validator.check_dimension_homogeneity("dim_customer")
+
+        sql = self.mock_db.query.call_args[0][0]
+        assert "AND table_name = %(table)s" in sql
+
+    def test_fact_query_filters_latest_stats_by_table(self):
+        mock_result = MagicMock()
+        mock_result.result_rows = []
+        self.mock_db.query.return_value = mock_result
+
+        self.validator.check_fact_homogeneity("fact_sales")
+
+        sql = self.mock_db.query.call_args[0][0]
+        assert "AND table_name = %(table)s" in sql

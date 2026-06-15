@@ -69,6 +69,7 @@ class SemanticHomogeneityValidator:
             SELECT max(run_ts)
             FROM {q_ident(META_DB)}.column_stats
             WHERE database_name = %(db)s
+              AND table_name = %(table)s
         )
         AND (
             positionCaseInsensitive(cp.column_type, 'Int') > 0
@@ -150,6 +151,7 @@ class SemanticHomogeneityValidator:
             SELECT max(run_ts)
             FROM {q_ident(META_DB)}.column_stats
             WHERE database_name = %(db)s
+              AND table_name = %(table)s
         )
         """
         rows = self.db.query(
