@@ -112,6 +112,34 @@ CH_PASSWORD=your_password
 
 The metadata schema is created automatically by the pipeline when needed.
 
+### CSV Ingestion Options
+
+CSV ingestion is conservative by default. Date and datetime values are kept as strings
+unless temporal inference is explicitly enabled in `config/scoring.py`.
+
+The main ingestion options are:
+
+| Setting | Purpose |
+| --- | --- |
+| `INFER_TEMPORAL_TYPES` | Enables automatic `Date32` and `DateTime` inference when set to `True` |
+| `DATE_FORMATS` | Accepted date formats, for example `%Y-%m-%d` or `%d/%m/%Y` |
+| `DATETIME_FORMATS` | Accepted datetime formats |
+| `NULL_TOKENS` | Text values interpreted as nulls during import |
+
+Example:
+
+```python
+INGESTION_SETTINGS = {
+    "INFER_TEMPORAL_TYPES": False,
+    "DATE_FORMATS": ("%Y-%m-%d", "%d/%m/%Y"),
+    "DATETIME_FORMATS": ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"),
+    "NULL_TOKENS": ("", "null", "none", "nan", "n/a"),
+}
+```
+
+Rows that look like export metadata or separator lines are skipped during CSV import and
+counted in the ingestion metadata as `skipped_dirty_rows`.
+
 ## Quick Start
 
 Prepare a folder containing the CSV files to analyze. Kawakiri expects one table per
