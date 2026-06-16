@@ -205,6 +205,7 @@ def test_loaders_read_all_validation_result_types() -> None:
                 )
             ]
         ),
+        MagicMock(result_rows=[("geography", 0.9, "table_has_no_confirmed_relationships")]),
     ]
     engine = ModelCertificationEngine(db)
 
@@ -217,3 +218,13 @@ def test_loaders_read_all_validation_result_types() -> None:
     assert stability["dimension_table"] == "customers"
     assert stability["group_column"] == "country"
     assert stability["is_stable"] is True
+
+    isolated = engine.load_isolated_tables()
+    assert isolated == [
+        {
+            "table_name": "geography",
+            "role": "ISOLATED",
+            "confidence": 0.9,
+            "reason": "table_has_no_confirmed_relationships",
+        }
+    ]

@@ -125,7 +125,7 @@ def run_adjacency() -> None:
 
     join_candidates = join_engine.load_candidates()
     edges = adjacency_engine.build_edges_from_join_candidates(join_candidates)
-    matrix = adjacency_engine.build_matrix(edges)
+    matrix = adjacency_engine.build_matrix(edges, adjacency_engine.load_profiled_tables())
 
     adjacency_engine.store_edges(edges)
     adjacency_engine.print_matrix(matrix)

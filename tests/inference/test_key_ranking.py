@@ -82,6 +82,25 @@ def test_build_candidate_penalises_low_cardinality_columns() -> None:
     assert candidate.low_cardinality_column_count == 1
 
 
+def test_build_candidate_counts_key_like_columns() -> None:
+    """Identifier-like names provide explicit evidence for key ranking."""
+    policy = KeyRankingPolicy()
+
+    candidate = policy.build_candidate(
+        database_name="lab_db",
+        table_name="entities",
+        column_names=("entity_code",),
+        column_types=("String",),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.8,
+        low_cardinality_columns=set(),
+    )
+
+    assert candidate.key_like_column_count == 1
+
+
 # ── Tests rank ────────────────────────────────────────────────────────────────
 
 
@@ -116,6 +135,38 @@ def test_rank_prefers_minimal_keys() -> None:
 
     # The single-column key (1 column) must come first.
     assert ranked[0].column_names == ("id",)
+
+
+def test_rank_prefers_key_like_name_over_unique_numeric_attribute() -> None:
+    """A unique business measure must not outrank an explicit identifier."""
+    policy = KeyRankingPolicy()
+
+    identifier = policy.build_candidate(
+        database_name="db",
+        table_name="entities",
+        column_names=("entity_code",),
+        column_types=("String",),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.8,
+        low_cardinality_columns=set(),
+    )
+    numeric_attribute = policy.build_candidate(
+        database_name="db",
+        table_name="entities",
+        column_names=("capacity",),
+        column_types=("Int64",),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.8,
+        low_cardinality_columns=set(),
+    )
+
+    ranked = policy.rank([numeric_attribute, identifier])
+
+    assert ranked[0].column_names == ("entity_code",)
 
 
 # ── Tests select_best_by_table ────────────────────────────────────────────────

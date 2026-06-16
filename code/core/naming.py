@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 
 TECHNICAL_KEY_TOKENS = {"id", "fk", "pk", "key"}
-KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code"}
+KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref"}
 SEPARATOR_REGEX = re.compile(r"[_\-\s]+")
-CAMELCASE_KEY_SUFFIX_REGEX = re.compile(r"(?<=[a-z0-9])(ID|Id|FK|Fk|PK|Pk|Key|No)$")
+CAMELCASE_KEY_SUFFIX_REGEX = re.compile(r"(?<=[a-z0-9])(ID|Id|FK|Fk|PK|Pk|Key|No|Ref)$")
 CAMELCASE_BOUNDARY_REGEX = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 YEAR_TOKEN_REGEX = re.compile(r"^(?:19|20)\d{2}$")
 
@@ -66,12 +66,12 @@ def normalize_key_concept(column_name: str | None) -> str:
 
 def normalize_key_concept_tokens(column_name: str | None) -> tuple[str, ...]:
     """
-    Return semantic tokens for a key concept, without technical key markers.
+    Return semantic tokens for a key concept, without identifier markers.
     """
     return tuple(
         token
         for token in split_column_name_tokens(column_name)
-        if token not in TECHNICAL_KEY_TOKENS
+        if token not in KEY_LIKE_TOKENS
     )
 
 

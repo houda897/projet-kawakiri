@@ -77,19 +77,25 @@ class AdjacencyMatrixEngine:
     def build_matrix(
         self,
         edges: list[AdjacencyEdge],
+        table_names: set[str] | None = None,
     ) -> dict[str, dict[str, float]]:
         """
         Build a sparse adjacency matrix indexed by source and target table.
 
         When several edges exist between the same pair of tables, the strongest
-        join coverage is kept.
+        join coverage is kept. Tables with no confirmed edges can be supplied
+        explicitly so the printed matrix still represents the whole profiled
+        schema.
         """
 
-        matrix: dict[str, dict[str, float]] = {}
+        matrix: dict[str, dict[str, float]] = {
+            table_name: {} for table_name in sorted(table_names or set())
+        }
         confirmed_edges = [edge for edge in edges if edge.evidence == "CONFIRMED"]
 
         for edge in confirmed_edges:
             matrix.setdefault(edge.source_table, {})
+            matrix.setdefault(edge.target_table, {})
 
             current_score = matrix[edge.source_table].get(edge.target_table, 0.0)
             matrix[edge.source_table][edge.target_table] = max(
@@ -98,6 +104,21 @@ class AdjacencyMatrixEngine:
             )
 
         return matrix
+
+    def load_profiled_tables(self) -> set[str]:
+        """
+        Return every table observed during profiling for the active database.
+        """
+
+        sql = f"""
+        SELECT DISTINCT table_name
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+        ORDER BY table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return {row[0] for row in rows}
 
     def store_edges(self, edges: list[AdjacencyEdge]) -> None:
         """

@@ -34,7 +34,7 @@ def test_classify_table_as_dimension_with_incoming() -> None:
     assert "referenced_by_other_tables" in reason
 
 
-def test_classify_table_as_dimension_isolated() -> None:
+def test_classify_table_as_isolated_without_confirmed_relationships() -> None:
     role, confidence, reason = TableRoleEngine.classify_table(
         row_count=10,
         outgoing_edges=0,
@@ -44,15 +44,30 @@ def test_classify_table_as_dimension_isolated() -> None:
         text_columns=3,
         date_columns=0,
     )
-    assert role == "DIMENSION"
-    assert confidence == 0.65
-    assert "few_confirmed_links" in reason
+    assert role == "ISOLATED"
+    assert confidence == 0.9
+    assert "no_confirmed_relationships" in reason
 
 
-def test_classify_table_unknown() -> None:
+def test_classify_table_without_links_is_isolated_even_without_primary_key() -> None:
     role, confidence, reason = TableRoleEngine.classify_table(
         row_count=50,
         outgoing_edges=0,
+        incoming_edges=0,
+        has_primary_key=False,
+        numeric_columns=1,
+        text_columns=3,
+        date_columns=0,
+    )
+    assert role == "ISOLATED"
+    assert confidence == 0.9
+    assert "no_confirmed_relationships" in reason
+
+
+def test_classify_table_unknown_when_linked_evidence_is_inconclusive() -> None:
+    role, confidence, reason = TableRoleEngine.classify_table(
+        row_count=50,
+        outgoing_edges=1,
         incoming_edges=0,
         has_primary_key=False,
         numeric_columns=1,

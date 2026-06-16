@@ -58,6 +58,19 @@ def test_build_matrix_keeps_max_score() -> None:
     assert "weak_dim" not in matrix["sales"]
 
 
+def test_build_matrix_keeps_profiled_tables_without_edges() -> None:
+    engine = AdjacencyMatrixEngine(db=None, semantic_engine=IdentitySemanticEngine())  # type: ignore[arg-type]
+
+    edges = [
+        AdjacencyEdge("sales", "customers", ("customer_id",), ("id",), 0.99, None, "CONFIRMED"),
+    ]
+
+    matrix = engine.build_matrix(edges, table_names={"sales", "customers", "isolated_reference"})
+
+    assert set(matrix) == {"sales", "customers", "isolated_reference"}
+    assert matrix["isolated_reference"] == {}
+
+
 def test_print_edges_accepts_missing_hybrid_score() -> None:
     edges = [
         AdjacencyEdge("sales", "customers", ("customer_id",), ("id",), 0.99, None, "CONFIRMED"),
