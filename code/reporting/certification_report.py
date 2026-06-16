@@ -31,6 +31,7 @@ class CertificationReportExporter:
             raise ValueError("No model certification result found. Run certify-models first.")
 
         issues_by_model = self.load_issues()
+        excluded_tables = self.load_excluded_tables()
         models = [
             self.build_model_report(certification, issues_by_model)
             for certification in certifications
@@ -42,6 +43,7 @@ class CertificationReportExporter:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "best_model": best_model,
             "models": models,
+            "excluded_tables": excluded_tables,
         }
 
     def build_model_report(
@@ -148,6 +150,34 @@ class CertificationReportExporter:
             )
 
         return issues
+
+    def load_excluded_tables(self) -> list[dict]:
+        """
+        Return tables deliberately kept outside inferred decision models.
+        """
+        sql = f"""
+        SELECT
+            table_name,
+            role,
+            confidence,
+            reason
+        FROM {q_ident(META_DB)}.table_roles
+        WHERE database_name = %(database)s
+          AND role = 'ISOLATED'
+        ORDER BY table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+
+        return [
+            {
+                "table_name": row[0],
+                "role": row[1],
+                "confidence": float(row[2]),
+                "reason": row[3],
+            }
+            for row in rows
+        ]
 
     def write_json(self, path: str | Path) -> dict:
         report = self.build_report()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.scoring import PK_WEIGHTS
+from core.naming import is_key_like_column
 from core.schema import is_numeric_type as is_clickhouse_numeric_type
 from core.schema import normalize_clickhouse_type
 
@@ -13,7 +14,7 @@ class RankedKeyCandidate:
     Key candidate enriched with ranking evidence.
 
     The ranking favors minimal keys first, avoids measure-like columns, then
-    prefers numeric identifiers and stronger statistical evidence.
+    prefers explicit identifier names and stronger statistical evidence.
     """
 
     database_name: str
@@ -24,6 +25,7 @@ class RankedKeyCandidate:
     null_ratio: float
     uniqueness_ratio: float
     identifiability_score: float
+    key_like_column_count: int
     numeric_column_count: int
     measure_like_column_count: int
     low_cardinality_column_count: int
@@ -54,6 +56,7 @@ class KeyRankingPolicy:
         """
 
         numeric_count = self.count_numeric_columns(column_types)
+        key_like_count = self.count_key_like_columns(column_names)
         measure_like_count = self.count_measure_like_columns(column_types)
 
         low_cardinality_count = sum(
@@ -77,13 +80,15 @@ class KeyRankingPolicy:
             null_ratio=null_ratio,
             uniqueness_ratio=uniqueness_ratio,
             identifiability_score=identifiability_score,
+            key_like_column_count=key_like_count,
             numeric_column_count=numeric_count,
             measure_like_column_count=measure_like_count,
             low_cardinality_column_count=low_cardinality_count,
             confidence=confidence,
             rank_reason=(
                 "rank=minimal_columns,avoid_measure_like_columns,"
-                "numeric_preference,uniqueness,completeness,identifiability"
+                "key_name_preference,numeric_preference,"
+                "uniqueness,completeness,identifiability"
             ),
         )
 
@@ -100,8 +105,9 @@ class KeyRankingPolicy:
             key=lambda candidate: (
                 len(candidate.column_names),
                 candidate.measure_like_column_count,
-                -candidate.numeric_column_count,
                 candidate.low_cardinality_column_count,
+                -candidate.key_like_column_count,
+                -candidate.numeric_column_count,
                 -candidate.uniqueness_ratio,
                 candidate.null_ratio,
                 -candidate.identifiability_score,
@@ -128,6 +134,18 @@ class KeyRankingPolicy:
     @classmethod
     def count_numeric_columns(cls, column_types: tuple[str, ...]) -> int:
         return sum(1 for column_type in column_types if cls.is_numeric_type(column_type))
+
+    @staticmethod
+    def count_key_like_columns(column_names: tuple[str, ...]) -> int:
+        """
+        Count columns whose names explicitly encode identifier semantics.
+
+        Statistical uniqueness alone is not sufficient to identify a primary
+        key: descriptive or quantitative attributes can also be unique in small
+        reference tables. Naming evidence keeps the ranking aligned with the
+        relational role of the column when candidates have comparable quality.
+        """
+        return sum(1 for column_name in column_names if is_key_like_column(column_name))
 
     @classmethod
     def count_measure_like_columns(cls, column_types: tuple[str, ...]) -> int:

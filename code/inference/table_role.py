@@ -36,7 +36,9 @@ class TableRoleEngine:
 
     A fact table usually points to several dimensions and carries mostly
     numeric measures. A dimension table usually has a primary key and descriptive
-    columns, and can also point to other dimensions in a snowflake schema.
+    columns, and can also point to other dimensions in a snowflake schema. An
+    isolated table has no confirmed relationship in the current graph and is
+    kept outside generated decision models.
     """
 
     def __init__(self, db: ClickHouseManager):
@@ -340,6 +342,13 @@ class TableRoleEngine:
     ) -> tuple[str, float, str]:
         has_additive_signal = additive_measure_columns is None or additive_measure_columns > 0
 
+        if outgoing_edges == 0 and incoming_edges == 0:
+            return (
+                "ISOLATED",
+                0.9,
+                "table_has_no_confirmed_relationships",
+            )
+
         if (
             outgoing_edges >= 2
             and row_count >= 5
@@ -379,13 +388,6 @@ class TableRoleEngine:
                 "DIMENSION",
                 0.85,
                 "table_has_primary_key_and_is_referenced_by_other_tables",
-            )
-
-        if has_primary_key:
-            return (
-                "DIMENSION",
-                0.65,
-                "table_has_primary_key_but_few_confirmed_links",
             )
 
         return (

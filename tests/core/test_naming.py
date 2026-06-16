@@ -12,6 +12,7 @@ def test_is_key_like_column_detects_real_identifier_tokens() -> None:
     assert is_key_like_column("ItemKey")
     assert is_key_like_column("ticket_no")
     assert is_key_like_column("status_code")
+    assert is_key_like_column("book_ref")
 
 
 def test_is_key_like_column_avoids_semantic_false_positives() -> None:
@@ -20,6 +21,7 @@ def test_is_key_like_column_avoids_semantic_false_positives() -> None:
     assert not is_key_like_column("rapid")
     assert not is_key_like_column("casino")
     assert not is_key_like_column("unicode")
+    assert not is_key_like_column("preference")
 
 
 def test_normalize_column_name_keeps_words_ending_like_keys() -> None:
@@ -33,6 +35,8 @@ def test_normalize_column_name_keeps_words_ending_like_keys() -> None:
 def test_key_concept_preserves_business_level() -> None:
     assert normalize_key_concept("ItemKey") == "item"
     assert normalize_key_concept("ItemGroupKey") == "itemgroup"
+    assert normalize_key_concept("airport_code") == "airport"
+    assert normalize_key_concept("BookRef") == "book"
     assert same_key_concept("ItemKey", "ItemKey")
     assert not same_key_concept("ItemKey", "ItemGroupKey")
     assert not same_key_concept("ItemSubgroupKey", "ItemGroupKey")
@@ -43,6 +47,8 @@ def test_key_concept_allows_more_specific_source_to_general_dimension_key() -> N
     assert same_key_concept("OrderDate", "Date")
     assert same_key_concept("TerritoryKey", "SalesTerritoryKey")
     assert same_key_concept("ItemGroupKey", "GroupKey")
+    assert same_key_concept("arrival_airport", "airport_code")
+    assert same_key_concept("departure_airport", "airport_code")
 
 
 def test_generic_id_does_not_force_semantic_rejection() -> None:

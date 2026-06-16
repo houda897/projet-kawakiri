@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
+from inference.table_role import TableRoleCandidate
 from validation.semantic_homogeneity_validator import SemanticHomogeneityValidator
 
 
@@ -79,3 +80,38 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
 
         sql = self.mock_db.query.call_args[0][0]
         assert "AND table_name = %(table)s" in sql
+
+    def test_check_homogeneity_skips_roles_outside_model_scope(self):
+        roles = [
+            TableRoleCandidate(
+                table_name="geography",
+                row_count=10,
+                outgoing_edges=0,
+                incoming_edges=0,
+                numeric_columns=2,
+                text_columns=1,
+                date_columns=0,
+                has_primary_key=False,
+                role="ISOLATED",
+                confidence=0.9,
+                reason="table_has_no_confirmed_relationships",
+            ),
+            TableRoleCandidate(
+                table_name="uncertain_table",
+                row_count=10,
+                outgoing_edges=1,
+                incoming_edges=0,
+                numeric_columns=1,
+                text_columns=1,
+                date_columns=0,
+                has_primary_key=False,
+                role="UNKNOWN",
+                confidence=0.4,
+                reason="not_enough_evidence_to_choose_fact_or_dimension",
+            ),
+        ]
+
+        reports = self.validator.check_homogeneity(roles)
+
+        assert reports == []
+        self.mock_db.query.assert_not_called()

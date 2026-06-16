@@ -18,6 +18,9 @@ from modeling.decision_model import (
 
 logger = get_logger(__name__)
 
+FACT_ROLE = "FACT"
+DIMENSION_ROLE = "DIMENSION"
+
 
 class DecisionModelCandidateBuilder:
     """
@@ -245,7 +248,7 @@ class DecisionModelCandidateBuilder:
             fact_edges = [
                 edge
                 for edge in edges
-                if edge.source_table == fact_table and roles.get(edge.target_table) == "DIMENSION"
+                if edge.source_table == fact_table and self.is_dimension(roles, edge.target_table)
             ]
 
             if not fact_edges:
@@ -277,7 +280,7 @@ class DecisionModelCandidateBuilder:
             direct_edges = [
                 edge
                 for edge in edges
-                if edge.source_table == fact_table and roles.get(edge.target_table) == "DIMENSION"
+                if edge.source_table == fact_table and self.is_dimension(roles, edge.target_table)
             ]
 
             if not direct_edges:
@@ -291,7 +294,7 @@ class DecisionModelCandidateBuilder:
                 for edge in edges:
                     if (
                         edge.source_table == dimension_table
-                        and roles.get(edge.target_table) == "DIMENSION"
+                        and self.is_dimension(roles, edge.target_table)
                     ):
                         snowflake_edges.append(
                             DecisionModelEdge(
@@ -331,8 +334,8 @@ class DecisionModelCandidateBuilder:
 
         for edge in edges:
             if (
-                roles.get(edge.source_table) == "FACT"
-                and roles.get(edge.target_table) == "DIMENSION"
+                self.is_fact(roles, edge.source_table)
+                and self.is_dimension(roles, edge.target_table)
             ):
                 facts_by_dimension[edge.target_table].add(edge.source_table)
 
@@ -350,7 +353,7 @@ class DecisionModelCandidateBuilder:
         constellation_edges = [
             edge
             for edge in edges
-            if edge.source_table in fact_tables and roles.get(edge.target_table) == "DIMENSION"
+            if edge.source_table in fact_tables and self.is_dimension(roles, edge.target_table)
         ]
 
         dimension_tables = sorted({edge.target_table for edge in constellation_edges})
@@ -396,7 +399,15 @@ class DecisionModelCandidateBuilder:
 
     @staticmethod
     def fact_tables(roles: dict[str, str]) -> list[str]:
-        return sorted(table_name for table_name, role in roles.items() if role == "FACT")
+        return sorted(table_name for table_name, role in roles.items() if role == FACT_ROLE)
+
+    @staticmethod
+    def is_fact(roles: dict[str, str], table_name: str) -> bool:
+        return roles.get(table_name) == FACT_ROLE
+
+    @staticmethod
+    def is_dimension(roles: dict[str, str], table_name: str) -> bool:
+        return roles.get(table_name) == DIMENSION_ROLE
 
     @staticmethod
     def split_columns(columns: str) -> tuple[str, ...]:

@@ -39,6 +39,8 @@ DESCRIPTIVE_KEYWORDS = {
     "region",
 }
 
+SKIPPED_ROLES = {"ISOLATED", "UNKNOWN"}
+
 
 class SemanticHomogeneityValidator:
     def __init__(self, db: ClickHouseManager):
@@ -236,8 +238,10 @@ class SemanticHomogeneityValidator:
                 reports.append(self.check_dimension_homogeneity(role.table_name))
             elif role.role == "FACT":
                 reports.append(self.check_fact_homogeneity(role.table_name))
+            elif role.role in SKIPPED_ROLES:
+                continue
             else:
-                logger.warning("Error in table role: %s", role.role)
+                logger.warning("Unsupported table role for semantic homogeneity: %s", role.role)
         return reports
 
     def store_homogeneity(self, reports: list[dict]) -> None:
