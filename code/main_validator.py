@@ -11,12 +11,12 @@ time0 = datetime.now()
 '''print('\n' + '=' * 80 + '\n')
 
 print(Fore.GREEN + '--- *** --- folder_ingestion --- *** ---\n' + Style.RESET_ALL)
-run_folder_ingestion('D:/Cours/KOUSHIN/DB_Exercice2')
+run_folder_ingestion('D:/Cours/M1_info/KOUSHIN/BD/human_brain/human_brain')
 
 time2 = datetime.now()
 segment_time = time2 - time0
 absolute_time = time2 - time0
-print(Fore.RED + f'--- *** --- folder_ingestion --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)'''
+print(Fore.RED + f'--- *** --- folder_ingestion --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
 print('\n' + '=' * 80 + '\n')
 
@@ -28,13 +28,13 @@ segment_time = time3 - time0
 absolute_time = time3 - time0
 print(Fore.RED + f'--- *** --- basic_profile --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
-print('\n' + '=' * 80 + '\n')
+print('\n' + '=' * 80 + '\n')'''
 
 print(Fore.GREEN + '--- *** --- identifiability --- *** ---\n' + Style.RESET_ALL)
 run_identifiability()
 
 time4 = datetime.now()
-segment_time = time4 - time3
+segment_time = time4 - time0
 absolute_time = time4 - time0
 print(Fore.RED + f'--- *** --- identifiability --- *** --- time: {segment_time} (absolute: {absolute_time})' + Style.RESET_ALL)
 
