@@ -40,9 +40,9 @@ AGGREGATION_STABILITY_COLUMNS = (
     ("delta_max", "Float64"),
 )
 
-DECISION_MODEL_SCORE_COLUMNS = (
-    ("normalized_score", "Float64"),
-)
+DECISION_MODEL_SCORE_COLUMNS = (("normalized_score", "Float64"),)
+
+INGESTION_RUN_COLUMNS = (("skipped_dirty_rows", "UInt64"),)
 
 
 def add_column_sql(table_name: str, column_name: str, column_type: str) -> str:
@@ -64,6 +64,7 @@ METADATA_TABLES = (
             target_table String,
             detected_delimiter String,
             row_count UInt64,
+            skipped_dirty_rows UInt64,
             column_count UInt64,
             status LowCardinality(String),
             error_message String,
@@ -72,6 +73,10 @@ METADATA_TABLES = (
         ENGINE = MergeTree
         ORDER BY (created_at, target_database, target_table)
         """,
+        migrations=tuple(
+            add_column_sql("ingestion_runs", column_name, column_type)
+            for column_name, column_type in INGESTION_RUN_COLUMNS
+        ),
     ),
     MetadataTable(
         name="ingestion_sources",

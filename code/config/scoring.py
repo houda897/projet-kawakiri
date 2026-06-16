@@ -29,6 +29,7 @@ EVALUATE_CANDIDATES = {
     "COMPOSITE_KEY_COLUMN_RESTRICTION": 3,
     "Filter_margin": 1.1,
     "JOIN_SAMPLE_ROWS": 100000,
+    "JOIN_MAX_WORKERS": 4,
     # Calculation for margin -> 1.1 = tolerate 10% more than the pk
 }
 
@@ -36,6 +37,13 @@ INGESTION_SETTINGS = {
     # Keep CSV ingestion robust by default: temporal values stay as String unless
     # this option is enabled for datasets with stable date/date-time formats.
     "INFER_TEMPORAL_TYPES": False,
+    "NULL_TOKENS": ("", "null", "none", "nan", "na", "n/a", "\\n", "\\N"),
+    "DATE_FORMATS": ("%Y-%m-%d", "%d/%m/%Y"),
+    "DATETIME_FORMATS": (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+    ),
 }
 
 PARSIMONY_WEIGHTS = {

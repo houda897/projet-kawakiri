@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
 
@@ -33,5 +34,33 @@ class DecisionModelCandidate:
 
     @property
     def model_id(self) -> str:
-        facts = "_".join(self.fact_tables)
-        return f"{self.model_type.value.lower()}_{facts.lower()}"
+        facts = "_".join(self.fact_tables).lower() or "model"
+        signature_parts = [
+            self.model_type.value,
+            ",".join(sorted(self.fact_tables)),
+            ",".join(sorted(self.dimension_tables)),
+            *(
+                "|".join(
+                    (
+                        edge.source_table,
+                        edge.target_table,
+                        ",".join(edge.source_columns),
+                        ",".join(edge.target_columns),
+                        str(edge.depth),
+                    )
+                )
+                for edge in sorted(
+                    self.edges,
+                    key=lambda item: (
+                        item.source_table,
+                        item.target_table,
+                        item.source_columns,
+                        item.target_columns,
+                        item.depth,
+                    ),
+                )
+            ),
+        ]
+        digest = hashlib.sha1("::".join(signature_parts).encode("utf-8")).hexdigest()[:8]
+
+        return f"{self.model_type.value.lower()}_{facts}_{digest}"

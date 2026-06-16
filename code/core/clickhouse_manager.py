@@ -29,6 +29,7 @@ class ClickHouseManager:
     """
 
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __init__(self):
         self.host = CH_HOST
@@ -121,8 +122,9 @@ class ClickHouseManager:
     @classmethod
     def get_instance(cls) -> "ClickHouseManager":
         """Return the shared singleton instance, creating it on first call."""
-        if cls._instance is None:
-            cls._instance = cls()
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = cls()
 
         return cls._instance
 

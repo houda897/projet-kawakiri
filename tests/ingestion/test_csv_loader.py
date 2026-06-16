@@ -121,6 +121,19 @@ def test_clean_value(engine: CsvIngestionEngine, raw: str | None, expected: str 
     assert engine.clean_value(raw) == expected
 
 
+def test_clean_value_uses_configurable_null_tokens(
+    engine: CsvIngestionEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        INGESTION_SETTINGS,
+        "NULL_TOKENS",
+        ("", "null", "missing"),
+    )
+
+    assert engine.clean_value(" missing ") is None
+
+
 def test_infer_column_types_marks_nullable_columns(engine: CsvIngestionEngine) -> None:
     headers = ["id", "amount", "created_at", "label"]
     rows = [
@@ -157,6 +170,16 @@ def test_infer_column_types_can_infer_temporal_columns(engine: CsvIngestionEngin
         ]
     finally:
         INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = previous_setting
+
+
+def test_date_formats_are_configurable(
+    engine: CsvIngestionEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(INGESTION_SETTINGS, "DATE_FORMATS", ("%d/%m/%Y",))
+
+    assert engine.parse_date("01/02/2024") == date(2024, 2, 1)
+    assert engine.is_date("2024-02-01") is False
 
 
 def test_validate_first_rows_before_import_marks_human_review(
@@ -240,15 +263,45 @@ def test_insert_csv_rows_casts_and_inserts_batches(
         DetectedColumn(name="amount", detected_type="Float64", nullable=False),
     ]
 
-    count = engine.insert_csv_rows(path, "lab_db", "sales", columns, ";")
+    count, skipped_dirty_rows = engine.insert_csv_rows(path, "lab_db", "sales", columns, ";")
     db = cast(MagicMock, engine.db)
 
     assert count == 2
+    assert skipped_dirty_rows == 0
     db.insert.assert_called_once_with(
         "`lab_db`.`sales`",
         [[1, 10.5], [2, 20.5]],
         column_names=["id", "amount"],
     )
+
+
+def test_insert_csv_rows_counts_rejected_dirty_rows(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rows.csv"
+    path.write_text(
+        "id;amount\n1;10.5\n---;---\n2;20.5\n",
+        encoding="utf-8",
+    )
+    columns = [
+        DetectedColumn(name="id", detected_type="Int64", nullable=False),
+        DetectedColumn(name="amount", detected_type="Float64", nullable=False),
+    ]
+
+    count, skipped_dirty_rows = engine.insert_csv_rows(path, "lab_db", "sales", columns, ";")
+
+    assert count == 2
+    assert skipped_dirty_rows == 1
+
+
+def test_is_dirty_row_keeps_business_rows_with_source_values(
+    engine: CsvIngestionEngine,
+) -> None:
+    assert engine.is_dirty_row({"supplier": "Source: Amazon", "amount": "10"}) is False
+    assert engine.is_dirty_row({"metadata": "Source: ERP export", "amount": ""}) is True
+    assert engine.is_dirty_row({"a": "---", "b": "---"}) is True
+    assert engine.is_dirty_row({"a": "", "b": ""}) is True
 
 
 def test_log_import_metadata_does_not_raise_when_metadata_write_fails(
