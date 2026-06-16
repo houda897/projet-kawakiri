@@ -73,3 +73,32 @@ class TestAggregationStabilityValidator(unittest.TestCase):
         self.assertIn("AVG instability", reports[0]["reason"])
         self.assertIn("MAX instability", reports[0]["reason"])
         self.assertEqual(reports[0]["delta_sum"], 150.0)
+
+    def test_select_additive_measure_rejects_keys_and_flat_counters(self):
+        self.assertFalse(
+            self.validator.select_additive_measure(
+                column_name="ProductKey",
+                column_type="Int64",
+                distinct_count=100,
+                entropy_ratio=0.9,
+                variation_coefficient=0.4,
+            )
+        )
+        self.assertFalse(
+            self.validator.select_additive_measure(
+                column_name="OrderLineItem",
+                column_type="Int64",
+                distinct_count=1,
+                entropy_ratio=0.0,
+                variation_coefficient=0.0,
+            )
+        )
+        self.assertTrue(
+            self.validator.select_additive_measure(
+                column_name="revenue",
+                column_type="Float64",
+                distinct_count=25,
+                entropy_ratio=0.7,
+                variation_coefficient=0.5,
+            )
+        )

@@ -72,6 +72,23 @@ class GranularityValidator:
                 fact_table=fact_table,
                 grain_columns=grain_columns,
             )
+
+            if duplicate_count > 0:
+                enriched_grain_columns = self.enrich_with_transactional_grain(
+                    fact_table=fact_table,
+                    grain_columns=grain_columns,
+                )
+
+                if enriched_grain_columns != grain_columns:
+                    enriched_duplicate_count = self.count_duplicate_grain_rows(
+                        fact_table=fact_table,
+                        grain_columns=enriched_grain_columns,
+                    )
+
+                    if enriched_duplicate_count <= duplicate_count:
+                        grain_columns = enriched_grain_columns
+                        duplicate_count = enriched_duplicate_count
+
             is_valid = duplicate_count == 0
 
             reason = (
@@ -112,6 +129,45 @@ class GranularityValidator:
                     grain_columns.append(column)
 
         return tuple(grain_columns)
+
+    def enrich_with_transactional_grain(
+        self,
+        fact_table: str,
+        grain_columns: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """
+        Add detected PK/composite-key columns when dimension keys alone are too coarse.
+        """
+        enriched_columns = list(grain_columns)
+
+        for column in self.infer_transactional_grain_columns(fact_table):
+            if column not in enriched_columns:
+                enriched_columns.append(column)
+
+        return tuple(enriched_columns)
+
+    def infer_transactional_grain_columns(self, fact_table: str) -> tuple[str, ...]:
+        """
+        Load the best stored key candidate for a fact table.
+        """
+        sql = f"""
+        SELECT column_name
+        FROM {q_ident(META_DB)}.primary_key_candidates
+        WHERE database_name = %(database)s
+          AND table_name = %(table)s
+        ORDER BY confidence DESC, identifiability_score DESC
+        LIMIT 1
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": self.database, "table": fact_table},
+        ).result_rows
+
+        if not rows or not isinstance(rows[0][0], str):
+            return ()
+
+        return self.split_columns(rows[0][0])
 
     def count_duplicate_grain_rows(
         self,
@@ -196,3 +252,7 @@ class GranularityValidator:
                 result.duplicate_count,
                 result.reason,
             )
+
+    @staticmethod
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
