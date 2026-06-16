@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
-from core.naming import normalize_column_name as normalize_key_column_name
+from core.naming import normalize_column_name
 from core.schema import q_ident
 
 logger = get_logger(__name__)
@@ -305,14 +305,10 @@ class SQLViewGenerator:
         exact_matches = sum(
             1
             for source_col, target_col in zip(source_columns, target_columns, strict=False)
-            if cls.normalize_column_name(source_col) == cls.normalize_column_name(target_col)
+            if normalize_column_name(source_col) == normalize_column_name(target_col)
         )
 
         return (float(edge["join_success_ratio"]), exact_matches)
-
-    @staticmethod
-    def normalize_column_name(column: str) -> str:
-        return normalize_key_column_name(column)
 
     @staticmethod
     def print_views(views: list[SqlViewDefinition]) -> None:

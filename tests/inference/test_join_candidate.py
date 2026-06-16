@@ -69,15 +69,55 @@ def test_should_skip_pair_rejects_incompatible_types() -> None:
 
 def test_should_skip_pair_accepts_compatible_candidate() -> None:
     """Different tables with matching base types form a valid join candidate."""
-    source = make_source("sales", "product_id", col_type="Int64")
-    pk = make_pk("products", "product_id", col_type="Int64")
+    source = make_source("sales", "item_id", col_type="Int64")
+    pk = make_pk("items", "item_id", col_type="Int64")
 
     assert JoinEngine.should_skip_pair((source,), pk) is False
 
 
+def test_should_skip_pair_rejects_different_key_concepts() -> None:
+    """A low-level entity key must not join to a higher-level group key."""
+    source = make_source("transactions", "ItemKey", col_type="Int64")
+    pk = make_pk("item_groups", "ItemGroupKey", col_type="Int64")
+
+    assert JoinEngine.should_skip_pair((source,), pk) is True
+
+
+def test_should_skip_pair_accepts_source_key_with_general_target_concept() -> None:
+    """Role-specific source keys can still point to a general dimension key."""
+    source = make_source("sales", "OrderDate", col_type="Date")
+    pk = make_pk("calendar", "Date", col_type="Date")
+
+    assert JoinEngine.should_skip_pair((source,), pk) is False
+
+
+def test_should_skip_pair_accepts_target_key_with_prefix_context() -> None:
+    """SalesTerritoryKey and TerritoryKey describe the same terminal concept."""
+    source = make_source("sales", "TerritoryKey", col_type="Int64")
+    pk = make_pk("territory", "SalesTerritoryKey", col_type="Int64")
+
+    assert JoinEngine.should_skip_pair((source,), pk) is False
+
+
+def test_should_skip_pair_keeps_generic_target_id_possible() -> None:
+    """Generic target ids can still be checked by physical coverage."""
+    source = make_source("sales", "customer_id", col_type="Int64")
+    pk = make_pk("customers", "id", col_type="Int64")
+
+    assert JoinEngine.should_skip_pair((source,), pk) is False
+
+
+def test_should_skip_pair_rejects_yearly_table_partitions() -> None:
+    """Year slices of the same logical table should not become model edges."""
+    source = make_source("transactions_2021", "OrderNumber", col_type="String")
+    pk = make_pk("transactions_2022", "OrderNumber", col_type="String")
+
+    assert JoinEngine.should_skip_pair((source,), pk) is True
+
+
 def test_should_skip_pair_handles_nullable_type() -> None:
     """Nullable(Int64) must be treated as Int64 when comparing types."""
-    source = make_source("sales", "product_id", col_type="Nullable(Int64)")
-    pk = make_pk("products", "product_id", col_type="Int64")
+    source = make_source("sales", "item_id", col_type="Nullable(Int64)")
+    pk = make_pk("items", "item_id", col_type="Int64")
 
     assert JoinEngine.should_skip_pair((source,), pk) is False

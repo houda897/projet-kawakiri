@@ -142,12 +142,8 @@ class AggregationStabilityValidator:
         )
         """
 
-        fine_sum, fine_count, fine_avg, fine_min, fine_max = (
-            self.db.query(sql_fine).result_rows[0]
-        )
-        agg_sum, agg_count, agg_avg, agg_min, agg_max = (
-            self.db.query(sql_agg).result_rows[0]
-        )
+        fine_sum, fine_count, fine_avg, fine_min, fine_max = self.db.query(sql_fine).result_rows[0]
+        agg_sum, agg_count, agg_avg, agg_min, agg_max = self.db.query(sql_agg).result_rows[0]
 
         return self._build_report(
             candidate=candidate,
@@ -243,7 +239,12 @@ class AggregationStabilityValidator:
         Find the best numeric measure candidate from stored column statistics.
         """
         sql = f"""
-        SELECT column_name
+        SELECT
+            column_name,
+            column_type,
+            distinct_count,
+            entropy_ratio,
+            variation_coefficient
         FROM {q_ident(META_DB)}.column_stats
         WHERE database_name = %(database)s
           AND table_name = %(table)s
@@ -268,10 +269,47 @@ class AggregationStabilityValidator:
 
         for row in rows:
             column_name = row[0]
-            if not is_key_like_column(column_name):
+            if self.select_additive_measure(
+                column_name=column_name,
+                column_type=row[1],
+                distinct_count=row[2],
+                entropy_ratio=row[3],
+                variation_coefficient=row[4],
+            ):
                 return column_name
 
         return None
+
+    def select_additive_measure(
+        self,
+        column_name: str,
+        column_type: str,
+        distinct_count: int,
+        entropy_ratio: float | None,
+        variation_coefficient: float | None,
+    ) -> bool:
+        """
+        Keep numeric columns that behave like measures rather than keys or counters.
+        """
+        if is_key_like_column(column_name):
+            return False
+
+        normalized_type = normalize_clickhouse_type(column_type).lower()
+        if not (
+            normalized_type.startswith("int")
+            or normalized_type.startswith("uint")
+            or normalized_type.startswith("float")
+            or normalized_type.startswith("decimal")
+        ):
+            return False
+
+        if distinct_count <= 1:
+            return False
+
+        entropy = entropy_ratio or 0.0
+        variation = abs(variation_coefficient or 0.0)
+
+        return entropy >= 0.05 or variation >= 0.05
 
     def _get_best_dimension_grouping(self, table_name: str) -> str | None:
         """
@@ -431,10 +469,7 @@ class AggregationStabilityValidator:
         delta = abs(expected_value - observed_value)
         scale = max(abs(expected_value), abs(observed_value), 1.0)
 
-        return (
-            delta <= self.absolute_epsilon
-            or (delta / scale) <= self.relative_epsilon
-        )
+        return delta <= self.absolute_epsilon or (delta / scale) <= self.relative_epsilon
 
     @staticmethod
     def _is_measure_like_type(column_type: str) -> bool:
