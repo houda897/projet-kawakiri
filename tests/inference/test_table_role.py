@@ -34,7 +34,7 @@ def test_classify_table_as_dimension_with_incoming() -> None:
     assert "referenced_by_other_tables" in reason
 
 
-def test_classify_table_as_dimension_isolated() -> None:
+def test_classify_table_as_isolated_without_confirmed_relationships() -> None:
     role, confidence, reason = TableRoleEngine.classify_table(
         row_count=10,
         outgoing_edges=0,
@@ -44,15 +44,30 @@ def test_classify_table_as_dimension_isolated() -> None:
         text_columns=3,
         date_columns=0,
     )
-    assert role == "DIMENSION"
-    assert confidence == 0.65
-    assert "few_confirmed_links" in reason
+    assert role == "ISOLATED"
+    assert confidence == 0.9
+    assert "no_confirmed_relationships" in reason
 
 
-def test_classify_table_unknown() -> None:
+def test_classify_table_without_links_is_isolated_even_without_primary_key() -> None:
     role, confidence, reason = TableRoleEngine.classify_table(
         row_count=50,
         outgoing_edges=0,
+        incoming_edges=0,
+        has_primary_key=False,
+        numeric_columns=1,
+        text_columns=3,
+        date_columns=0,
+    )
+    assert role == "ISOLATED"
+    assert confidence == 0.9
+    assert "no_confirmed_relationships" in reason
+
+
+def test_classify_table_unknown_when_linked_evidence_is_inconclusive() -> None:
+    role, confidence, reason = TableRoleEngine.classify_table(
+        row_count=50,
+        outgoing_edges=1,
         incoming_edges=0,
         has_primary_key=False,
         numeric_columns=1,
@@ -92,6 +107,80 @@ def test_classify_linked_descriptive_table_as_dimension() -> None:
     assert role == "DIMENSION"
     assert confidence == 0.75
     assert "mostly_descriptive_columns" in reason
+
+
+def test_classify_transactional_table_as_fact_with_additive_measure() -> None:
+    role, confidence, reason = TableRoleEngine.classify_table(
+        row_count=1000,
+        outgoing_edges=2,
+        incoming_edges=0,
+        has_primary_key=True,
+        numeric_columns=2,
+        text_columns=4,
+        date_columns=0,
+        additive_measure_columns=1,
+        has_transactional_grain=True,
+        is_lookup_table=False,
+    )
+
+    assert role == "FACT"
+    assert confidence == 0.8
+    assert "transactional_grain" in reason
+
+
+def test_classify_lookup_table_does_not_become_fact() -> None:
+    role, confidence, reason = TableRoleEngine.classify_table(
+        row_count=37,
+        outgoing_edges=2,
+        incoming_edges=2,
+        has_primary_key=True,
+        numeric_columns=2,
+        text_columns=1,
+        date_columns=0,
+        additive_measure_columns=0,
+        has_transactional_grain=True,
+        is_lookup_table=True,
+    )
+
+    assert role == "DIMENSION"
+    assert confidence == 0.85
+    assert "referenced_by_other_tables" in reason
+
+
+def test_is_additive_measure_column_rejects_keys_and_flat_counters() -> None:
+    assert (
+        TableRoleEngine.is_additive_measure_column(
+            column_name="ProductKey",
+            column_type="Int64",
+            distinct_count=100,
+            entropy_ratio=0.9,
+            variation_coefficient=0.5,
+            uniqueness_ratio=0.8,
+        )
+        is False
+    )
+    assert (
+        TableRoleEngine.is_additive_measure_column(
+            column_name="OrderLineItem",
+            column_type="Int64",
+            distinct_count=1,
+            entropy_ratio=0.0,
+            variation_coefficient=0.0,
+            uniqueness_ratio=0.0,
+        )
+        is False
+    )
+    assert (
+        TableRoleEngine.is_additive_measure_column(
+            column_name="revenue",
+            column_type="Float64",
+            distinct_count=20,
+            entropy_ratio=0.6,
+            variation_coefficient=0.4,
+            uniqueness_ratio=0.2,
+        )
+        is True
+    )
 
 
 def test_store_roles_persists_inferred_roles() -> None:

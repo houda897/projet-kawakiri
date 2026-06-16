@@ -46,10 +46,10 @@ The current validation layer focuses on:
 - **referential integrity**: detect orphan rows between fact and dimension tables;
 - **topology**: reject self-loops, problematic cycles, and invalid fact-to-fact links;
 - **deterministic granularity**: verify that fact rows are uniquely identified by their grain;
+- **semantic homogeneity**: detect fact-like measures inside dimensions and descriptive
+  attributes inside facts;
+- **aggregation stability**: verify that measures remain stable after dimensional roll-up;
 - **model certification**: combine ranking and validation results into a final status.
-
-Semantic homogeneity and aggregation stability are part of the validation roadmap and are
-implemented as dedicated engines so they can be integrated into the final certification flow.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ pipeline and persists its reusable results in ClickHouse metadata tables.
 | Statistics | `IdentifiabilityEngine` | Score how suitable columns are as identifiers |
 | Inference | `PrimaryKeyEngine`, `JoinEngine`, `AdjacencyMatrixEngine`, `TableRoleEngine` | Infer keys, joins, graph edges, and fact/dimension roles |
 | Modeling | `DecisionModelCandidateBuilder`, `ModelRanking` | Build and rank STAR, SNOWFLAKE, and CONSTELLATION candidates |
-| Validation | `StructuralValidator`, `GranularityValidator`, `ModelCertificationEngine` | Validate candidate models and produce certification results |
+| Validation | `StructuralValidator`, `GranularityValidator`, `SemanticHomogeneityValidator`, `AggregationStabilityValidator`, `ModelCertificationEngine` | Validate candidate models and produce certification results |
 | Generation | `SQLViewGenerator` | Generate SQL views from the best certified model |
 | Reporting | `CertificationReportExporter` | Export the final certification report as JSON |
 
@@ -112,6 +112,34 @@ CH_PASSWORD=your_password
 
 The metadata schema is created automatically by the pipeline when needed.
 
+### CSV Ingestion Options
+
+CSV ingestion is conservative by default. Date and datetime values are kept as strings
+unless temporal inference is explicitly enabled in `config/scoring.py`.
+
+The main ingestion options are:
+
+| Setting | Purpose |
+| --- | --- |
+| `INFER_TEMPORAL_TYPES` | Enables automatic `Date32` and `DateTime` inference when set to `True` |
+| `DATE_FORMATS` | Accepted date formats, for example `%Y-%m-%d` or `%d/%m/%Y` |
+| `DATETIME_FORMATS` | Accepted datetime formats |
+| `NULL_TOKENS` | Text values interpreted as nulls during import |
+
+Example:
+
+```python
+INGESTION_SETTINGS = {
+    "INFER_TEMPORAL_TYPES": False,
+    "DATE_FORMATS": ("%Y-%m-%d", "%d/%m/%Y"),
+    "DATETIME_FORMATS": ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"),
+    "NULL_TOKENS": ("", "null", "none", "nan", "n/a"),
+}
+```
+
+Rows that look like export metadata or separator lines are skipped during CSV import and
+counted in the ingestion metadata as `skipped_dirty_rows`.
+
 ## Quick Start
 
 Prepare a folder containing the CSV files to analyze. Kawakiri expects one table per
@@ -120,7 +148,7 @@ CSV file, and the folder path is provided by the user.
 Run the full available pipeline:
 
 ```bash
-kawakiri run-all path/to/csv-folder --report report.json
+kawakiri run-all path/to/csv-folder --report certification-report.json
 ```
 
 This command executes:
@@ -137,6 +165,8 @@ build-model-candidates
 rank-models
 validate-structure
 validate-granularity
+validate-semantic-homogeneity
+validate-aggregation-stability
 certify-models
 generate-sql-views
 export-certification-report
@@ -148,7 +178,7 @@ JSON certification report is still exported.
 To run the full pipeline without creating SQL views:
 
 ```bash
-kawakiri run-all path/to/csv-folder --report report.json --skip-sql-views
+kawakiri run-all path/to/csv-folder --report certification-report.json --skip-sql-views
 ```
 
 ## Step-by-Step Usage
@@ -167,9 +197,11 @@ kawakiri build-model-candidates
 kawakiri rank-models
 kawakiri validate-structure
 kawakiri validate-granularity
+kawakiri validate-semantic-homogeneity
+kawakiri validate-aggregation-stability
 kawakiri certify-models
 kawakiri generate-sql-views
-kawakiri export-certification-report report.json
+kawakiri export-certification-report certification-report.json
 ```
 
 You can inspect all commands with:
@@ -192,43 +224,10 @@ The report exporter writes a JSON file containing:
 Example:
 
 ```bash
-kawakiri export-certification-report report.json
+kawakiri export-certification-report certification-report.json
 ```
 
-## Development Checks
+## Contributing
 
-Before opening a pull request, run:
-
-```bash
-ruff check code tests
-ruff format --check code tests
-pytest -q
-```
-
-To format the project:
-
-```bash
-ruff format code tests
-```
-
-## Repository Hygiene
-
-Do not commit local datasets, generated reports, cache files, or environment files.
-
-Common files to keep out of commits:
-
-```text
-.env
-report.json
-__pycache__/
-.pytest_cache/
-local_data/
-```
-
-## Roadmap
-
-- Complete semantic homogeneity validation for fact/dimension separation.
-- Complete aggregation stability validation across dimensional levels.
-- Connect all validation engines into the final certification score.
-- Add more integration tests around the full pipeline.
-- Prepare the JOSS material: `paper.md`, `CITATION.cff`, license, and contributor guide.
+Development setup, code quality checks, and contribution guidelines are described in
+`CONTRIBUTING.md`.

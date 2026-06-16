@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -14,7 +15,6 @@ from core.schema import normalize_clickhouse_type, q_ident
 
 logger = get_logger(__name__)
 
-NULL_TOKENS: frozenset[str] = frozenset({"", "null", "none", "nan", "na", "n/a", "\\n", "\\N"})
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
 
@@ -40,6 +40,7 @@ class IngestionResult:
     column_count: int
     status: str
     error_message: str
+    skipped_dirty_rows: int = 0
 
 
 @dataclass
@@ -73,6 +74,7 @@ class CsvIngestionEngine:
         delimiter = ","
         columns: list[DetectedColumn] = []
         row_count = 0
+        skipped_dirty_rows = 0
         sample_check = SampleCheck(0, False, "")
 
         try:
@@ -100,7 +102,13 @@ class CsvIngestionEngine:
 
             self.create_database(database)
             self.prepare_table(database, table, columns, if_exists)
-            row_count = self.insert_csv_rows(path, database, table, columns, delimiter)
+            row_count, skipped_dirty_rows = self.insert_csv_rows(
+                path,
+                database,
+                table,
+                columns,
+                delimiter,
+            )
 
             result = self.build_result(
                 path=path,
@@ -111,6 +119,7 @@ class CsvIngestionEngine:
                 column_count=len(columns),
                 status="success",
                 error_message="",
+                skipped_dirty_rows=skipped_dirty_rows,
             )
 
         except Exception as exc:
@@ -123,6 +132,7 @@ class CsvIngestionEngine:
                 column_count=len(columns),
                 status="failed",
                 error_message=str(exc),
+                skipped_dirty_rows=skipped_dirty_rows,
             )
             self.log_import_metadata(result, columns, sample_check)
             logger.error("CSV import failed for %s: %s", path, exc)
@@ -185,12 +195,11 @@ class CsvIngestionEngine:
         headers = self.dedupe_names([self.clean_identifier(header) for header in original_headers])
 
         rows = []
-        for index, (_, row_data) in enumerate(self.iter_csv_rows(path, delimiter, headers)):
-            if sample_size is not None and index >= sample_size:
+        for _, row_data in self.iter_clean_csv_rows(path, delimiter, headers):
+            if sample_size is not None and len(rows) >= sample_size:
                 break
 
-            if not self.is_dirty_row(row_data):
-                rows.append(row_data)
+            rows.append(row_data)
 
         return headers, rows
 
@@ -250,12 +259,9 @@ class CsvIngestionEngine:
         column_names = [column.name for column in columns]
 
         try:
-            for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+            for line_number, row_data in self.iter_clean_csv_rows(path, delimiter, column_names):
                 if checked_rows >= row_limit:
                     break
-
-                if self.is_dirty_row(row_data):
-                    continue
 
                 for column in columns:
                     self.cast_value(row_data[column.name], column, line_number)
@@ -342,7 +348,7 @@ ORDER BY tuple()
         table: str,
         columns: list[DetectedColumn],
         delimiter: str,
-    ) -> int:
+    ) -> tuple[int, int]:
         """
         Insert CSV rows in batches.
 
@@ -351,10 +357,12 @@ ORDER BY tuple()
         """
         column_names = [column.name for column in columns]
         total_rows = 0
+        skipped_dirty_rows = 0
         batch: list[list[Any]] = []
 
         for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
             if self.is_dirty_row(row_data):
+                skipped_dirty_rows += 1
                 continue
 
             batch.append(
@@ -370,7 +378,7 @@ ORDER BY tuple()
             self.insert_batch(database, table, batch, column_names)
             total_rows += len(batch)
 
-        return total_rows
+        return total_rows, skipped_dirty_rows
 
     def insert_batch(
         self,
@@ -390,7 +398,7 @@ ORDER BY tuple()
         path: Path,
         delimiter: str,
         column_names: list[str],
-    ):
+    ) -> Iterator[tuple[int, dict[str, str | None]]]:
         with path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
             original_headers = list(reader.fieldnames or [])
@@ -410,6 +418,16 @@ ORDER BY tuple()
                         for index in range(len(column_names))
                     },
                 )
+
+    def iter_clean_csv_rows(
+        self,
+        path: Path,
+        delimiter: str,
+        column_names: list[str],
+    ) -> Iterator[tuple[int, dict[str, str | None]]]:
+        for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+            if not self.is_dirty_row(row_data):
+                yield line_number, row_data
 
     @staticmethod
     def read_original_headers(path: Path, delimiter: str) -> list[str]:
@@ -463,8 +481,8 @@ ORDER BY tuple()
             logger.warning("Metadata logging failed for %s: %s", result.source_path, exc)
 
     def log_ingestion_result(self, result: IngestionResult) -> None:
-        self.db.insert(
-            f"{META_DB}.ingestion_runs",
+        self.insert_metadata_rows(
+            "ingestion_runs",
             [
                 [
                     result.source_path,
@@ -472,6 +490,7 @@ ORDER BY tuple()
                     result.target_table,
                     result.detected_delimiter,
                     result.row_count,
+                    result.skipped_dirty_rows,
                     result.column_count,
                     result.status,
                     result.error_message,
@@ -483,6 +502,7 @@ ORDER BY tuple()
                 "target_table",
                 "detected_delimiter",
                 "row_count",
+                "skipped_dirty_rows",
                 "column_count",
                 "status",
                 "error_message",
@@ -508,8 +528,8 @@ ORDER BY tuple()
             for column in columns
         ]
 
-        self.db.insert(
-            f"{META_DB}.detected_columns",
+        self.insert_metadata_rows(
+            "detected_columns",
             rows,
             column_names=[
                 "target_database",
@@ -525,8 +545,8 @@ ORDER BY tuple()
         result: IngestionResult,
         sample_check: SampleCheck,
     ) -> None:
-        self.db.insert(
-            f"{META_DB}.ingestion_sources",
+        self.insert_metadata_rows(
+            "ingestion_sources",
             [
                 [
                     result.source_path,
@@ -549,6 +569,18 @@ ORDER BY tuple()
             ],
         )
 
+    def insert_metadata_rows(
+        self,
+        table_name: str,
+        rows: list[list[Any]],
+        column_names: list[str],
+    ) -> None:
+        self.db.insert(
+            f"{META_DB}.{table_name}",
+            rows,
+            column_names=column_names,
+        )
+
     @staticmethod
     def build_result(
         path: Path,
@@ -559,6 +591,7 @@ ORDER BY tuple()
         column_count: int,
         status: str,
         error_message: str,
+        skipped_dirty_rows: int = 0,
     ) -> IngestionResult:
         return IngestionResult(
             source_path=str(path),
@@ -569,6 +602,7 @@ ORDER BY tuple()
             column_count=column_count,
             status=status,
             error_message=error_message,
+            skipped_dirty_rows=skipped_dirty_rows,
         )
 
     @classmethod
@@ -614,13 +648,13 @@ ORDER BY tuple()
             "report",
         )
 
-        for value in values:
-            value_clean = value.lower()
+        if all(set(value) <= {"-"} for value in values):
+            return True
+
+        if len(values) == 1:
+            value_clean = values[0].lower()
 
             if value_clean.startswith(metadata_prefixes):
-                return True
-
-            if "---" in value_clean:
                 return True
 
         return False
@@ -661,10 +695,14 @@ ORDER BY tuple()
             return None
 
         value = value.strip()
-        if value.lower() in NULL_TOKENS:
+        if value.lower() in CsvIngestionEngine.null_tokens():
             return None
 
         return value
+
+    @staticmethod
+    def null_tokens() -> set[str]:
+        return {str(token).lower() for token in INGESTION_SETTINGS["NULL_TOKENS"]}
 
     def cast_value(
         self,
@@ -741,27 +779,30 @@ ORDER BY tuple()
 
     @staticmethod
     def parse_date(value: str) -> date:
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
-            try:
-                if fmt == "%Y-%m-%d":
-                    return date.fromisoformat(value)
-
-                return datetime.strptime(value, fmt).date()
-            except ValueError:
-                pass
-
-        raise ValueError(f"Invalid Date value: {value}")
+        return CsvIngestionEngine.parse_temporal_value(
+            value,
+            INGESTION_SETTINGS["DATE_FORMATS"],
+            "Date",
+        ).date()
 
     @staticmethod
     def parse_datetime(value: str) -> datetime:
-        for fmt in (
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%dT%H:%M:%S",
-            "%d/%m/%Y %H:%M:%S",
-        ):
+        return CsvIngestionEngine.parse_temporal_value(
+            value,
+            INGESTION_SETTINGS["DATETIME_FORMATS"],
+            "DateTime",
+        )
+
+    @staticmethod
+    def parse_temporal_value(
+        value: str,
+        formats: Sequence[str],
+        type_name: str,
+    ) -> datetime:
+        for fmt in formats:
             try:
                 return datetime.strptime(value, fmt)
             except ValueError:
                 pass
 
-        raise ValueError(f"Invalid DateTime value: {value}")
+        raise ValueError(f"Invalid {type_name} value: {value}")

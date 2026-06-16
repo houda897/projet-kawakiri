@@ -50,6 +50,16 @@ def make_db() -> MagicMock:
                 ),
             ]
         ),
+        SimpleNamespace(
+            result_rows=[
+                (
+                    "geography",
+                    "ISOLATED",
+                    0.9,
+                    "table_has_no_confirmed_relationships",
+                ),
+            ]
+        ),
     ]
     return db
 
@@ -65,6 +75,14 @@ def test_build_report_returns_best_model_and_rule_summary() -> None:
     assert "STRUCTURAL_VALIDATION" in report["best_model"]["passed_rules"]
     assert len(report["models"]) == 2
     assert report["models"][1]["failed_rules"] == ["DETERMINISTIC_GRANULARITY"]
+    assert report["excluded_tables"] == [
+        {
+            "table_name": "geography",
+            "role": "ISOLATED",
+            "confidence": 0.9,
+            "reason": "table_has_no_confirmed_relationships",
+        }
+    ]
 
 
 def test_build_report_requires_certification_results() -> None:

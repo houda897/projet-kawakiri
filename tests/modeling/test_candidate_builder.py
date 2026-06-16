@@ -54,6 +54,53 @@ def test_build_star_candidate_from_fact_to_dimensions() -> None:
     assert candidate.numeric_attribute_count == 6
 
 
+def test_build_star_candidate_ignores_isolated_tables() -> None:
+    builder = DecisionModelCandidateBuilder(db=None)  # type: ignore[arg-type]
+    roles = {
+        "sales": "FACT",
+        "customers": "DIMENSION",
+        "geography": "ISOLATED",
+    }
+    edges = [
+        edge("sales", "customers", "customer_id", "customer_id"),
+        edge("sales", "geography", "zip_code", "zip_code"),
+    ]
+    column_counts = {
+        "sales": {"attribute_count": 5, "numeric_attribute_count": 3},
+        "customers": {"attribute_count": 4, "numeric_attribute_count": 1},
+        "geography": {"attribute_count": 5, "numeric_attribute_count": 2},
+    }
+
+    candidates = builder.build_star_candidates(roles, edges, column_counts)
+
+    assert len(candidates) == 1
+    assert candidates[0].dimension_tables == ("customers",)
+    assert candidates[0].table_count == 2
+
+
+def test_model_id_changes_when_dimensions_change() -> None:
+    builder = DecisionModelCandidateBuilder(db=None)  # type: ignore[arg-type]
+
+    candidate_a = builder.to_candidate(
+        model_type=DecisionModelType.STAR,
+        fact_tables=("sales",),
+        dimension_tables=("customers",),
+        edges=(edge("sales", "customers", "customer_id", "customer_id"),),
+        column_counts={},
+    )
+    candidate_b = builder.to_candidate(
+        model_type=DecisionModelType.STAR,
+        fact_tables=("sales",),
+        dimension_tables=("products",),
+        edges=(edge("sales", "products", "product_id", "product_id"),),
+        column_counts={},
+    )
+
+    assert candidate_a.model_id != candidate_b.model_id
+    assert candidate_a.model_id.startswith("star_sales_")
+    assert candidate_b.model_id.startswith("star_sales_")
+
+
 def test_build_snowflake_candidate_includes_dimension_to_dimension_edges() -> None:
     builder = DecisionModelCandidateBuilder(db=None)  # type: ignore[arg-type]
     roles = {

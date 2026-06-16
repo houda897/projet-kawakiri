@@ -12,8 +12,8 @@ from config.scoring import EVALUATE_CANDIDATES
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.schema import is_numeric_type, q_ident
-
+from core.naming import is_partition_like_table_pair, same_key_concept
+from core.schema import is_numeric_type, normalize_clickhouse_type, q_ident
 from inference.primary_key import PrimaryKeyCandidate
 
 logger = get_logger(__name__)
@@ -201,12 +201,12 @@ class JoinEngine:
         ),
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
-        max_workers: int | None = None,
-        show_progress: bool = True,
+        max_workers: int | None = EVALUATE_CANDIDATES.get("JOIN_MAX_WORKERS", 4),
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
+
         if source_columns is None:
             source_columns = self.load_source_columns()
         stats = self.load_column_stats()
@@ -535,13 +535,25 @@ class JoinEngine:
         if same_table:
             return True
 
+        if is_partition_like_table_pair(source_combo[0].table_name, primary_key.table_name):
+            return True
+
         target_types = [cls._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
+        target_columns = [column.strip() for column in primary_key.column_name.split(",")]
 
         if len(source_combo) != len(target_types):
             return True
 
-        for src, target_type in zip(source_combo, target_types, strict=False):
+        for src, target_type, target_column in zip(
+            source_combo,
+            target_types,
+            target_columns,
+            strict=False,
+        ):
             if cls._clean_type(src.column_type) != target_type:
+                return True
+
+            if not same_key_concept(src.column_name, target_column):
                 return True
 
         return False

@@ -54,6 +54,13 @@ class ModelCertificationEngine:
         granularity_results = self.load_granularity_results()
         homogeneity_results = self.load_homogeneity_results()
         stability_results = self.load_stability_results()
+        isolated_tables = self.load_isolated_tables()
+
+        if isolated_tables:
+            logger.info(
+                "Ignoring %s isolated table(s) outside candidate models.",
+                len(isolated_tables),
+            )
 
         return [
             self.certify_candidate(
@@ -358,6 +365,33 @@ class ModelCertificationEngine:
             )
 
         return results
+
+    def load_isolated_tables(self) -> list[dict]:
+        """
+        Load tables that are explicitly outside the inferred decision-model graph.
+        """
+        sql = f"""
+        SELECT
+            table_name,
+            confidence,
+            reason
+        FROM {q_ident(META_DB)}.table_roles
+        WHERE database_name = %(database)s
+          AND role = 'ISOLATED'
+        ORDER BY table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+
+        return [
+            {
+                "table_name": row[0],
+                "role": "ISOLATED",
+                "confidence": float(row[1]),
+                "reason": row[2],
+            }
+            for row in rows
+        ]
 
     @staticmethod
     def choose_status(issues: list[CertificationIssue]) -> str:
