@@ -9,14 +9,32 @@ import pytest
 from main import run_all
 
 
+
 @pytest.mark.integration
 class TestE2EPipelineRealData(unittest.TestCase):
+
+    REQUIRED_CH_DATABASE = "Exercice"
+    
     def setUp(self):
         """
         Set up the test environment:
         Point to the directory containing the real CSV files and create
         a temporary directory to isolate the generated JSON report.
         """
+        actual_db = os.environ.get("CH_DATABASE", "")
+
+        if actual_db != self.REQUIRED_CH_DATABASE:
+
+            self.skipTest(
+
+                f"Integration test skipped: CH_DATABASE must be '{self.REQUIRED_CH_DATABASE}' "
+
+                f"in your .env file. Current value: '{actual_db or '(not set)'}'.\n"
+
+                f"Set CH_DATABASE={self.REQUIRED_CH_DATABASE} and re-run."
+
+            )
+
         # Get the directory where this test file is located
         self.current_dir = os.path.dirname(os.path.abspath(__file__))
         # Path to the sample database folder containing your CSV files
