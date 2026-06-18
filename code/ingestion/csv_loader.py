@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
+GENERIC_DATA_FOLDER_NAMES = {"data", "dataset", "datasets", "csv", "raw"}
 
 
 @dataclass
@@ -608,9 +609,13 @@ ORDER BY tuple()
     @classmethod
     def table_name_from_folder_file(cls, folder: Path, csv_file: Path) -> str:
         relative_path = csv_file.relative_to(folder)
-        table_source_name = (
-            relative_path.parts[0] if len(relative_path.parts) > 1 else csv_file.stem
-        )
+        table_source_name = csv_file.stem
+
+        if len(relative_path.parts) > 1 and relative_path.parts[0].lower() not in (
+            GENERIC_DATA_FOLDER_NAMES
+        ):
+            table_source_name = relative_path.parts[0]
+
         return cls.clean_identifier(table_source_name)
 
     @staticmethod

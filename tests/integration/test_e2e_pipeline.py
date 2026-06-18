@@ -1,12 +1,15 @@
-import unittest
-import os
 import json
+import os
 import tempfile
-from unittest.mock import patch
+import unittest
+
+import pytest
 
 # Importing the orchestration function from your main.py
 from main import run_all
 
+
+@pytest.mark.integration
 class TestE2EPipelineRealData(unittest.TestCase):
     def setUp(self):
         """
@@ -27,11 +30,6 @@ class TestE2EPipelineRealData(unittest.TestCase):
         """Clean up the temporary directory after the test execution."""
         self.temp_output_dir.cleanup()
 
-    # Force the use of test databases to protect your production/dev ClickHouse data
-    @patch.dict(os.environ, {
-        "CH_DATABASE": "kawakiri_test_db",
-        "META_DB": "kawakiri_test_meta"
-    })
     def test_pipeline_on_real_dataset(self):
         """
         Execute the full E2E pipeline on the sample dataset and verify
@@ -56,7 +54,7 @@ class TestE2EPipelineRealData(unittest.TestCase):
         # 2. Verify that the output certification report was generated
         self.assertTrue(os.path.exists(self.report_path), "The certification report JSON was not generated.")
 
-        with open(self.report_path, "r", encoding="utf-8") as f:
+        with open(self.report_path, encoding="utf-8") as f:
             report_data = json.load(f)
 
         # 3. High-level structural validations on the JSON schema
@@ -80,20 +78,20 @@ class TestE2EPipelineRealData(unittest.TestCase):
         # 'sales' is correctly identified as the central Fact table
         self.assertIn("sales", fact_tables, f"The 'sales' table should be recognized as a Fact table. Found: {fact_tables}")
         self.assertEqual(len(fact_tables), 1, f"There should be only 1 central Fact table. Found: {fact_tables}")
-        
+
         # Verify the 4 validated Dimension tables connected to the 'sales' ecosystem
         expected_dimensions = {"calendar", "customers", "products", "shipments"}
         self.assertEqual(set(dim_tables), expected_dimensions, f"Expected dimensions {expected_dimensions}, got {dim_tables}")
-        
+
         # 'categories_source' must be excluded from the final star model as it is isolated
         self.assertNotIn("categories_source", fact_tables, "Isolated table should not be a Fact table.")
         self.assertNotIn("categories_source", dim_tables, "Isolated table should not be a Dimension table.")
 
         # 5. Model Metadata Assertions (Ultra-robust fallback validation)
         model_type = (
-            best_model.get("type") 
-            or best_model.get("model_type") 
-            or best_model.get("architecture") 
+            best_model.get("type")
+            or best_model.get("model_type")
+            or best_model.get("architecture")
             or best_model.get("schema_type")
         )
         # Ultimate fallback: check if the string "star" is present in the model's ID field
