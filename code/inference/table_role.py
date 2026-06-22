@@ -376,6 +376,21 @@ class TableRoleEngine:
                 "table_has_transactional_grain_and_additive_measure",
             )
 
+        if (
+            outgoing_edges >= 1
+            and incoming_edges == 0
+            and has_primary_key
+            and row_count >= 5
+            and numeric_columns > text_columns
+            and has_additive_signal
+            and not is_lookup_table
+        ):
+            return (
+                "FACT",
+                0.8,
+                "table_has_quantitative_grain_and_outgoing_dimension_link",
+            )
+
         if outgoing_edges >= 1 and has_primary_key and text_columns >= numeric_columns:
             return (
                 "DIMENSION",

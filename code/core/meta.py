@@ -206,6 +206,78 @@ METADATA_TABLES = (
         """,
     ),
     MetadataTable(
+        name="functional_column_groups",
+        computed=True,
+        create_sql=f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.functional_column_groups
+        (
+            database_name String,
+            source_table String,
+            group_name String,
+            determinant_columns String,
+            dependent_columns String,
+            confidence Float64,
+            reason String,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, source_table, group_name, created_at)
+        """,
+    ),
+    MetadataTable(
+        name="functional_group_columns",
+        computed=True,
+        create_sql=f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.functional_group_columns
+        (
+            database_name String,
+            source_table String,
+            group_name String,
+            column_name String,
+            is_determinant Bool,
+            is_dependent Bool,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, source_table, group_name, column_name, created_at)
+        """,
+    ),
+    MetadataTable(
+        name="logical_tables",
+        computed=True,
+        create_sql=f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.logical_tables
+        (
+            database_name String,
+            logical_table_name String,
+            source_table String,
+            group_name String,
+            determinant_columns String,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, logical_table_name, created_at)
+        """,
+    ),
+    MetadataTable(
+        name="logical_table_columns",
+        computed=True,
+        create_sql=f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(META_DB)}.logical_table_columns
+        (
+            database_name String,
+            logical_table_name String,
+            source_table String,
+            group_name String,
+            column_name String,
+            is_determinant Bool,
+            created_at DateTime DEFAULT now()
+        )
+        ENGINE = MergeTree
+        ORDER BY (database_name, logical_table_name, column_name, created_at)
+        """,
+    ),
+    MetadataTable(
         name="adjacency_edges",
         computed=True,
         create_sql=f"""
@@ -577,3 +649,19 @@ def load_confirmed_adjacency_edges(
         )
         for row in rows
     ]
+
+
+def load_logical_table_names(db, database: str = CH_DB) -> list[str]:
+    """
+    Load materialized logical table names, if logical reconstruction was run.
+    """
+
+    sql = f"""
+    SELECT logical_table_name
+    FROM {q_ident(META_DB)}.logical_tables
+    WHERE database_name = %(database)s
+    ORDER BY logical_table_name
+    """
+
+    rows = db.query(sql, parameters={"database": database}).result_rows
+    return [row[0] for row in rows]

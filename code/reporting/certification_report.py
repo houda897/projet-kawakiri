@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
+from core.logger import get_logger
 from core.schema import q_ident
+
+logger = get_logger(__name__)
 
 EXPECTED_RULES = (
     "PARSIMONY_RANKING",
@@ -179,6 +183,79 @@ class CertificationReportExporter:
             for row in rows
         ]
 
+    def load_model_edges(self, model_id: str) -> list[dict]:
+        """
+        Return the joins that compose a stored decision model.
+        """
+        sql = f"""
+        SELECT
+            source_table,
+            target_table,
+            source_columns,
+            target_columns,
+            join_success_ratio,
+            depth
+        FROM {q_ident(META_DB)}.decision_model_edges
+        WHERE database_name = %(database)s
+          AND model_id = %(model_id)s
+        ORDER BY depth, source_table, target_table
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "model_id": model_id},
+        ).result_rows
+
+        return [
+            {
+                "source_table": row[0],
+                "target_table": row[1],
+                "source_columns": row[2],
+                "target_columns": row[3],
+                "join_success_ratio": float(row[4]),
+                "depth": int(row[5]),
+            }
+            for row in rows
+        ]
+
+    def build_best_model_schema(self, report: dict | None = None) -> str:
+        """
+        Build a readable schema for the selected model in the certification report.
+        """
+        if report is None:
+            report = self.build_report()
+
+        best_model = report["best_model"]
+        edges = self.load_model_edges(best_model["model_id"])
+        return self.format_model_schema(
+            model=best_model,
+            edges=edges,
+            excluded_tables=report.get("excluded_tables", []),
+        )
+
+    def print_best_model_schema(self, report: dict | None = None) -> str:
+        """
+        Print the selected model as a Mermaid diagram and return that text.
+        """
+        schema = self.build_best_model_schema(report)
+        logger.info("=== inferred model schema (Mermaid) ===\n%s", schema)
+        return schema
+
+    def write_mermaid_schema(
+        self,
+        path: str | Path,
+        report: dict | None = None,
+    ) -> str:
+        """
+        Write the selected model schema as a Mermaid file and return its content.
+        """
+        schema = self.build_best_model_schema(report)
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(schema, encoding="utf-8")
+        logger.info("Mermaid model schema exported: %s", output_path)
+        return schema
+
     def write_json(self, path: str | Path) -> dict:
         report = self.build_report()
         output_path = Path(path)
@@ -196,3 +273,100 @@ class CertificationReportExporter:
     @staticmethod
     def split_columns(columns: str) -> list[str]:
         return [column.strip() for column in columns.split(",") if column.strip()]
+
+    @staticmethod
+    def format_model_schema(
+        model: dict,
+        edges: list[dict],
+        excluded_tables: list[dict],
+    ) -> str:
+        table_names = (
+            model.get("fact_tables", [])
+            + model.get("dimension_tables", [])
+            + [table["table_name"] for table in excluded_tables]
+        )
+        node_ids = {
+            table_name: CertificationReportExporter.mermaid_node_id(table_name)
+            for table_name in table_names
+        }
+
+        lines = [
+            "flowchart LR",
+            f"  %% Model: {model['model_id']}",
+            f"  %% Type: {model['model_type']}",
+            f"  %% Status: {model['status']} | score={model['certification_score']}",
+            "  classDef fact fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#111827",
+            "  classDef dimension fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#111827",
+            "  classDef excluded fill:#f3f4f6,stroke:#6b7280,stroke-dasharray: 4 3,color:#374151",
+        ]
+
+        fact_tables = model.get("fact_tables", [])
+        if fact_tables:
+            lines.append("  subgraph Facts")
+            for table in fact_tables:
+                lines.append(
+                    f"    {node_ids[table]}[\"{CertificationReportExporter.mermaid_label(table, 'FACT')}\"]:::fact"
+                )
+            lines.append("  end")
+
+        dimension_tables = model.get("dimension_tables", [])
+        if dimension_tables:
+            lines.append("  subgraph Dimensions")
+            for table in dimension_tables:
+                lines.append(
+                    f"    {node_ids[table]}[\"{CertificationReportExporter.mermaid_label(table, 'DIMENSION')}\"]:::dimension"
+                )
+            lines.append("  end")
+
+        if excluded_tables:
+            lines.append("  subgraph Excluded")
+            for table in excluded_tables:
+                table_name = table["table_name"]
+                lines.append(
+                    f"    {node_ids[table_name]}[\"{CertificationReportExporter.mermaid_label(table_name, table['role'])}\"]:::excluded"
+                )
+            lines.append("  end")
+
+        for edge in edges:
+            source = node_ids.get(
+                edge["source_table"],
+                CertificationReportExporter.mermaid_node_id(edge["source_table"]),
+            )
+            target = node_ids.get(
+                edge["target_table"],
+                CertificationReportExporter.mermaid_node_id(edge["target_table"]),
+            )
+            label = CertificationReportExporter.mermaid_edge_label(edge)
+            lines.append(f"  {source} -->|\"{label}\"| {target}")
+
+        issues = model.get("issues", [])
+        if issues:
+            lines.append("  %% Certification issues")
+            for issue in issues:
+                table_name = issue.get("table_name") or "model"
+                lines.append(
+                    f"  %% {issue['rule_name']} [{issue['severity']}] "
+                    f"{table_name}: {issue['message']}"
+                )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def mermaid_node_id(table_name: str) -> str:
+        node_id = re.sub(r"\W+", "_", table_name).strip("_")
+        if not node_id or node_id[0].isdigit():
+            node_id = f"table_{node_id}"
+        return node_id
+
+    @staticmethod
+    def mermaid_label(table_name: str, table_role: str) -> str:
+        escaped_name = table_name.replace('"', "'")
+        escaped_role = table_role.replace('"', "'")
+        return f"{escaped_name}<br/>{escaped_role}"
+
+    @staticmethod
+    def mermaid_edge_label(edge: dict) -> str:
+        source_columns = str(edge["source_columns"]).replace('"', "'")
+        target_columns = str(edge["target_columns"]).replace('"', "'")
+        ratio = f"{edge['join_success_ratio']:.4g}"
+        return f"{source_columns} = {target_columns}<br/>ratio={ratio}"

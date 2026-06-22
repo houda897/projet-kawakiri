@@ -4,17 +4,13 @@ import tempfile
 import unittest
 
 import pytest
-
-# Importing the orchestration function from your main.py
 from main import run_all
-
 
 
 @pytest.mark.integration
 class TestE2EPipelineRealData(unittest.TestCase):
-
     REQUIRED_CH_DATABASE = "Exercice"
-    
+
     def setUp(self):
         """
         Set up the test environment:
@@ -56,7 +52,7 @@ class TestE2EPipelineRealData(unittest.TestCase):
         # Pre-check to ensure the data folder path is correct
         self.assertTrue(
             os.path.exists(self.folder_path),
-            f"Test data directory not found: {self.folder_path}"
+            f"Test data directory not found: {self.folder_path}",
         )
 
         # 1. Run the entire pipeline orchestration
@@ -64,7 +60,7 @@ class TestE2EPipelineRealData(unittest.TestCase):
             run_all(
                 path=self.folder_path,
                 report_path=self.report_path,
-                skip_sql_views=True  # Skip SQL views to speed up the integration test
+                skip_sql_views=True,
             )
         except Exception as e:
             self.fail(f"The E2E pipeline crashed unexpectedly with error: {e}")

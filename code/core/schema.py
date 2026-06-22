@@ -41,14 +41,20 @@ def is_numeric_type(ch_type: str) -> bool:
     return normalize_clickhouse_type(ch_type).startswith(NUMERIC_TYPE_PREFIXES)
 
 
-def list_tables(client, database: str = CH_DB) -> list[str]:
+def list_tables(
+    client,
+    database: str = CH_DB,
+    include_internal: bool = False,
+) -> list[str]:
     """Return the names of all regular (non-view) tables in the given database."""
+    internal_filter = "" if include_internal else "AND NOT startsWith(name, 'logical_')"
     rows = client.query(
-        """
+        f"""
         SELECT name
         FROM system.tables
         WHERE database = %(db)s
           AND engine NOT IN ('View', 'MaterializedView')
+          {internal_filter}
         ORDER BY name
         """,
         parameters={"db": database},

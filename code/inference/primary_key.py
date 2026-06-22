@@ -286,7 +286,7 @@ class PrimaryKeyEngine:
 
         for candidate in candidates:
             logger.info(
-                "%s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s",
+                "\n\nPK | %s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s\n",
                 candidate.database_name,
                 candidate.table_name,
                 candidate.column_name,
