@@ -218,6 +218,41 @@ class CertificationReportExporter:
             for row in rows
         ]
 
+    def load_model_columns(self, table_names: list[str]) -> dict[str, list[dict]]:
+        """
+        Return profiled columns for the tables shown in the diagram.
+        """
+        if not table_names:
+            return {}
+
+        sql = f"""
+        SELECT
+            table_name,
+            column_name,
+            column_type
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+          AND table_name IN %(table_names)s
+          AND NOT startsWith(column_name, '__')
+        ORDER BY table_name, column_name
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "table_names": tuple(table_names)},
+        ).result_rows
+        columns_by_table: dict[str, list[dict]] = {table_name: [] for table_name in table_names}
+
+        for row in rows:
+            columns_by_table.setdefault(row[0], []).append(
+                {
+                    "column_name": row[1],
+                    "column_type": row[2],
+                }
+            )
+
+        return columns_by_table
+
     def build_best_model_schema(self, report: dict | None = None) -> str:
         """
         Build a readable schema for the selected model in the certification report.
@@ -227,10 +262,13 @@ class CertificationReportExporter:
 
         best_model = report["best_model"]
         edges = self.load_model_edges(best_model["model_id"])
+        table_names = best_model["fact_tables"] + best_model["dimension_tables"]
+        columns_by_table = self.load_model_columns(table_names)
         return self.format_model_schema(
             model=best_model,
             edges=edges,
             excluded_tables=report.get("excluded_tables", []),
+            columns_by_table=columns_by_table,
         )
 
     def print_best_model_schema(self, report: dict | None = None) -> str:
@@ -279,65 +317,43 @@ class CertificationReportExporter:
         model: dict,
         edges: list[dict],
         excluded_tables: list[dict],
+        columns_by_table: dict[str, list[dict]] | None = None,
     ) -> str:
-        table_names = (
-            model.get("fact_tables", [])
-            + model.get("dimension_tables", [])
-            + [table["table_name"] for table in excluded_tables]
-        )
-        node_ids = {
-            table_name: CertificationReportExporter.mermaid_node_id(table_name)
-            for table_name in table_names
-        }
+        columns_by_table = columns_by_table or {}
 
         lines = [
-            "flowchart LR",
+            "erDiagram",
             f"  %% Model: {model['model_id']}",
             f"  %% Type: {model['model_type']}",
             f"  %% Status: {model['status']} | score={model['certification_score']}",
-            "  classDef fact fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#111827",
-            "  classDef dimension fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#111827",
-            "  classDef excluded fill:#f3f4f6,stroke:#6b7280,stroke-dasharray: 4 3,color:#374151",
         ]
 
         fact_tables = model.get("fact_tables", [])
-        if fact_tables:
-            lines.append("  subgraph Facts")
-            for table in fact_tables:
-                lines.append(
-                    f"    {node_ids[table]}[\"{CertificationReportExporter.mermaid_label(table, 'FACT')}\"]:::fact"
-                )
-            lines.append("  end")
-
         dimension_tables = model.get("dimension_tables", [])
-        if dimension_tables:
-            lines.append("  subgraph Dimensions")
-            for table in dimension_tables:
-                lines.append(
-                    f"    {node_ids[table]}[\"{CertificationReportExporter.mermaid_label(table, 'DIMENSION')}\"]:::dimension"
-                )
-            lines.append("  end")
+        table_aliases = CertificationReportExporter.build_mermaid_table_aliases(
+            fact_tables,
+            dimension_tables,
+            excluded_tables,
+        )
+        table_roles = {
+            **{table: "FACT" for table in fact_tables},
+            **{table: "DIMENSION" for table in dimension_tables},
+            **{table["table_name"]: table["role"] for table in excluded_tables},
+        }
 
-        if excluded_tables:
-            lines.append("  subgraph Excluded")
-            for table in excluded_tables:
-                table_name = table["table_name"]
-                lines.append(
-                    f"    {node_ids[table_name]}[\"{CertificationReportExporter.mermaid_label(table_name, table['role'])}\"]:::excluded"
+        for table in fact_tables + dimension_tables + [table["table_name"] for table in excluded_tables]:
+            lines.extend(
+                CertificationReportExporter.format_er_table(
+                    table,
+                    table_aliases[table],
+                    table_roles[table],
+                    columns_by_table.get(table, []),
+                    edges,
                 )
-            lines.append("  end")
+            )
 
         for edge in edges:
-            source = node_ids.get(
-                edge["source_table"],
-                CertificationReportExporter.mermaid_node_id(edge["source_table"]),
-            )
-            target = node_ids.get(
-                edge["target_table"],
-                CertificationReportExporter.mermaid_node_id(edge["target_table"]),
-            )
-            label = CertificationReportExporter.mermaid_edge_label(edge)
-            lines.append(f"  {source} -->|\"{label}\"| {target}")
+            lines.append(CertificationReportExporter.format_er_relation(edge, table_aliases))
 
         issues = model.get("issues", [])
         if issues:
@@ -359,14 +375,100 @@ class CertificationReportExporter:
         return node_id
 
     @staticmethod
-    def mermaid_label(table_name: str, table_role: str) -> str:
-        escaped_name = table_name.replace('"', "'")
-        escaped_role = table_role.replace('"', "'")
-        return f"{escaped_name}<br/>{escaped_role}"
+    def format_er_table(
+        table_name: str,
+        table_alias: str,
+        table_role: str,
+        columns: list[dict],
+        edges: list[dict],
+    ) -> list[str]:
+        lines = [f"  {table_alias} {{"]
+
+        if not columns:
+            lines.append(f"    string {table_role}")
+        else:
+            for column in columns:
+                column_name = column["column_name"]
+                markers = CertificationReportExporter.column_markers(
+                    table_name,
+                    column_name,
+                    edges,
+                )
+                marker_text = f" {markers}" if markers else ""
+                lines.append(
+                    "    "
+                    f"{CertificationReportExporter.mermaid_type(column['column_type'])} "
+                    f"{CertificationReportExporter.mermaid_column_name(column_name)}"
+                    f"{marker_text}"
+                )
+
+        lines.append("  }")
+        lines.append(f"  %% {table_alias}: {table_role} source={table_name}")
+        return lines
 
     @staticmethod
-    def mermaid_edge_label(edge: dict) -> str:
+    def format_er_relation(edge: dict, table_aliases: dict[str, str]) -> str:
+        parent = table_aliases.get(
+            edge["target_table"],
+            CertificationReportExporter.mermaid_node_id(edge["target_table"]),
+        )
+        child = table_aliases.get(
+            edge["source_table"],
+            CertificationReportExporter.mermaid_node_id(edge["source_table"]),
+        )
         source_columns = str(edge["source_columns"]).replace('"', "'")
         target_columns = str(edge["target_columns"]).replace('"', "'")
         ratio = f"{edge['join_success_ratio']:.4g}"
-        return f"{source_columns} = {target_columns}<br/>ratio={ratio}"
+        label = f"{source_columns} = {target_columns}; ratio={ratio}"
+        return f"  {parent} ||--o{{ {child} : \"{label}\""
+
+    @staticmethod
+    def build_mermaid_table_aliases(
+        fact_tables: list[str],
+        dimension_tables: list[str],
+        excluded_tables: list[dict],
+    ) -> dict[str, str]:
+        aliases = {}
+
+        for index, table_name in enumerate(fact_tables, start=1):
+            aliases[table_name] = (
+                "FACT_TABLE" if len(fact_tables) == 1 else f"FACT_TABLE_{index}"
+            )
+
+        for index, table_name in enumerate(dimension_tables, start=1):
+            aliases[table_name] = f"DIMENSION_TABLE_{index}"
+
+        for index, table in enumerate(excluded_tables, start=1):
+            aliases[table["table_name"]] = f"EXCLUDED_TABLE_{index}"
+
+        return aliases
+
+    @staticmethod
+    def column_markers(
+        table_name: str,
+        column_name: str,
+        edges: list[dict],
+    ) -> str:
+        markers = []
+        for edge in edges:
+            if table_name == edge["target_table"] and column_name in CertificationReportExporter.split_columns(
+                str(edge["target_columns"])
+            ):
+                markers.append("PK")
+            if table_name == edge["source_table"] and column_name in CertificationReportExporter.split_columns(
+                str(edge["source_columns"])
+            ):
+                markers.append("FK")
+        return ",".join(dict.fromkeys(markers))
+
+    @staticmethod
+    def mermaid_type(column_type: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z_]+", "_", column_type).strip("_")
+        return normalized or "string"
+
+    @staticmethod
+    def mermaid_column_name(column_name: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z_]+", "_", column_name).strip("_")
+        if not normalized or normalized[0].isdigit():
+            normalized = f"column_{normalized}"
+        return normalized

@@ -149,17 +149,33 @@ def test_format_model_schema_renders_mermaid_diagram() -> None:
         model,
         edges,
         excluded_tables,
+        columns_by_table={
+            "sales": [
+                {"column_name": "sale_id", "column_type": "Int64"},
+                {"column_name": "customer_id", "column_type": "Int64"},
+                {"column_name": "amount", "column_type": "Float64"},
+            ],
+            "customers": [
+                {"column_name": "customer_id", "column_type": "Int64"},
+                {"column_name": "customer_name", "column_type": "String"},
+            ],
+            "geography": [
+                {"column_name": "country", "column_type": "String"},
+            ],
+        },
     )
 
-    assert schema.startswith("flowchart LR")
+    assert schema.startswith("erDiagram")
     assert "%% Model: star_sales" in schema
-    assert "subgraph Facts" in schema
-    assert 'sales["sales<br/>FACT"]:::fact' in schema
-    assert "subgraph Dimensions" in schema
-    assert 'customers["customers<br/>DIMENSION"]:::dimension' in schema
-    assert 'sales -->|"customer_id = customer_id<br/>ratio=1"| customers' in schema
+    assert "FACT_TABLE {" in schema
+    assert "%% FACT_TABLE: FACT source=sales" in schema
+    assert "Float64 amount" in schema
+    assert "DIMENSION_TABLE_1 {" in schema
+    assert "%% DIMENSION_TABLE_1: DIMENSION source=customers" in schema
+    assert "Int64 customer_id PK" in schema
+    assert 'DIMENSION_TABLE_1 ||--o{ FACT_TABLE : "customer_id = customer_id; ratio=1"' in schema
     assert "%% AGGREGATION_STABILITY [WARNING] model" in schema
-    assert 'geography["geography<br/>ISOLATED"]:::excluded' in schema
+    assert "EXCLUDED_TABLE_1 {" in schema
     assert "```" not in schema
 
 
@@ -172,6 +188,14 @@ def test_write_mermaid_schema_writes_mmd_file(tmp_path) -> None:
                 ("sales", "customers", "customer_id", "customer_id", 1.0, 1),
             ]
         ),
+        SimpleNamespace(
+            result_rows=[
+                ("sales", "amount", "Float64"),
+                ("sales", "customer_id", "Int64"),
+                ("customers", "customer_id", "Int64"),
+                ("customers", "customer_name", "String"),
+            ]
+        ),
     ]
     exporter = CertificationReportExporter(db)
     report = exporter.build_report()
@@ -180,5 +204,6 @@ def test_write_mermaid_schema_writes_mmd_file(tmp_path) -> None:
     schema = exporter.write_mermaid_schema(output_path, report)
 
     assert output_path.read_text(encoding="utf-8") == schema
-    assert schema.startswith("flowchart LR")
-    assert "sales -->" in schema
+    assert schema.startswith("erDiagram")
+    assert "DIMENSION_TABLE_1 ||--o{ FACT_TABLE" in schema
+    assert "Float64 amount" in schema
