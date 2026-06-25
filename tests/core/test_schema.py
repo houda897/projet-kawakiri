@@ -1,4 +1,11 @@
-from core.schema import is_numeric_type, list_tables, normalize_clickhouse_type, q_ident
+from core.schema import (
+    is_continuous_numeric_type,
+    is_numeric_type,
+    is_temporal_type,
+    list_tables,
+    normalize_clickhouse_type,
+    q_ident,
+)
 
 
 class FakeQueryResult:
@@ -30,6 +37,18 @@ def test_is_numeric_type_handles_wrapped_clickhouse_types() -> None:
     assert is_numeric_type("Nullable(Decimal(10, 2))")
     assert is_numeric_type("LowCardinality(Nullable(UInt64))")
     assert not is_numeric_type("Nullable(String)")
+
+
+def test_is_continuous_numeric_type_handles_wrapped_clickhouse_types() -> None:
+    assert is_continuous_numeric_type("Nullable(Decimal(10, 2))")
+    assert is_continuous_numeric_type("LowCardinality(Nullable(Float64))")
+    assert not is_continuous_numeric_type("UInt64")
+
+
+def test_is_temporal_type_handles_wrapped_clickhouse_types() -> None:
+    assert is_temporal_type("Nullable(Date)")
+    assert is_temporal_type("LowCardinality(Nullable(DateTime64(3)))")
+    assert not is_temporal_type("String")
 
 
 def test_list_tables_excludes_internal_logical_tables_by_default() -> None:

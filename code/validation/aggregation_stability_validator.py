@@ -3,7 +3,7 @@ from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.naming import is_key_like_column
-from core.schema import normalize_clickhouse_type, q_ident
+from core.schema import is_continuous_numeric_type, normalize_clickhouse_type, q_ident
 from modeling.candidate_builder import DecisionModelCandidateBuilder
 from modeling.decision_model import DecisionModelCandidate
 
@@ -476,5 +476,4 @@ class AggregationStabilityValidator:
         """
         Helper method to determine if a ClickHouse type represents continuous data (Floats/Decimals).
         """
-        normalized_type = normalize_clickhouse_type(column_type).lower()
-        return "float" in normalized_type or "decimal" in normalized_type
+        return is_continuous_numeric_type(column_type)

@@ -1,6 +1,9 @@
 from core.naming import (
+    is_grain_like_column,
     is_key_like_column,
+    is_measure_like_column,
     is_partition_like_table_pair,
+    is_temporal_like_column,
     normalize_column_name,
     normalize_key_concept,
     same_key_concept,
@@ -22,6 +25,26 @@ def test_is_key_like_column_avoids_semantic_false_positives() -> None:
     assert not is_key_like_column("casino")
     assert not is_key_like_column("unicode")
     assert not is_key_like_column("preference")
+
+
+def test_is_measure_like_column_detects_measure_tokens() -> None:
+    assert is_measure_like_column("total_amount")
+    assert is_measure_like_column("UnitPrice")
+    assert is_measure_like_column("discount_pct")
+    assert is_measure_like_column("quantity")
+    assert not is_measure_like_column("customer_name")
+
+
+def test_is_grain_like_column_detects_line_level_tokens() -> None:
+    assert is_grain_like_column("order_line_item")
+    assert is_grain_like_column("line_number")
+    assert not is_grain_like_column("customer_name")
+
+
+def test_is_temporal_like_column_detects_calendar_tokens() -> None:
+    assert is_temporal_like_column("order_date")
+    assert is_temporal_like_column("fiscal_year")
+    assert not is_temporal_like_column("customer_name")
 
 
 def test_normalize_column_name_keeps_words_ending_like_keys() -> None:

@@ -41,6 +41,16 @@ def is_numeric_type(ch_type: str) -> bool:
     return normalize_clickhouse_type(ch_type).startswith(NUMERIC_TYPE_PREFIXES)
 
 
+def is_continuous_numeric_type(ch_type: str) -> bool:
+    """Return True for numeric types commonly used as continuous measures."""
+    return normalize_clickhouse_type(ch_type).startswith(("Float", "Decimal"))
+
+
+def is_temporal_type(ch_type: str) -> bool:
+    """Return True when a ClickHouse physical type represents a date/time value."""
+    return normalize_clickhouse_type(ch_type).startswith(("Date", "DateTime"))
+
+
 def list_tables(
     client,
     database: str = CH_DB,

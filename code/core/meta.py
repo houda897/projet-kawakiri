@@ -44,6 +44,13 @@ DECISION_MODEL_SCORE_COLUMNS = (("normalized_score", "Float64"),)
 
 INGESTION_RUN_COLUMNS = (("skipped_dirty_rows", "UInt64"),)
 
+FUNCTIONAL_GROUP_COLUMNS = (
+    ("group_score", "Float64"),
+    ("group_role", "String"),
+)
+
+LOGICAL_TABLE_COLUMNS = (("logical_table_role", "String"),)
+
 
 def add_column_sql(table_name: str, column_name: str, column_type: str) -> str:
     return f"""
@@ -218,11 +225,17 @@ METADATA_TABLES = (
             dependent_columns String,
             confidence Float64,
             reason String,
+            group_score Float64,
+            group_role String,
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
         ORDER BY (database_name, source_table, group_name, created_at)
         """,
+        migrations=tuple(
+            add_column_sql("functional_column_groups", column_name, column_type)
+            for column_name, column_type in FUNCTIONAL_GROUP_COLUMNS
+        ),
     ),
     MetadataTable(
         name="functional_group_columns",
@@ -253,11 +266,16 @@ METADATA_TABLES = (
             source_table String,
             group_name String,
             determinant_columns String,
+            logical_table_role String,
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
         ORDER BY (database_name, logical_table_name, created_at)
         """,
+        migrations=tuple(
+            add_column_sql("logical_tables", column_name, column_type)
+            for column_name, column_type in LOGICAL_TABLE_COLUMNS
+        ),
     ),
     MetadataTable(
         name="logical_table_columns",

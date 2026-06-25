@@ -41,6 +41,7 @@ class CertificationReportExporter:
             for certification in certifications
         ]
         best_model = self.select_best_model(models)
+        coverage = self.build_coverage(best_model)
 
         return {
             "database_name": CH_DB,
@@ -48,6 +49,7 @@ class CertificationReportExporter:
             "best_model": best_model,
             "models": models,
             "excluded_tables": excluded_tables,
+            "coverage": coverage,
         }
 
     def build_model_report(
@@ -183,6 +185,93 @@ class CertificationReportExporter:
             for row in rows
         ]
 
+    def build_coverage(self, best_model: dict) -> dict:
+        """
+        Explain what is shown in the certified model and what remains outside it.
+        """
+        certified_tables = set(best_model["fact_tables"] + best_model["dimension_tables"])
+        logical_tables = self.load_logical_tables()
+        logical_tables_outside_model = [
+            table
+            for table in logical_tables
+            if table["logical_table_name"] not in certified_tables
+        ]
+
+        covered_columns = self.load_covered_source_columns()
+        uncovered_columns = [
+            column
+            for column in self.load_source_columns()
+            if (column["source_table"], column["column_name"]) not in covered_columns
+        ]
+
+        return {
+            "certified_model_tables": sorted(certified_tables),
+            "logical_tables": logical_tables,
+            "logical_tables_outside_model": logical_tables_outside_model,
+            "uncovered_columns": uncovered_columns,
+        }
+
+    def load_logical_tables(self) -> list[dict]:
+        sql = f"""
+        SELECT
+            logical_table_name,
+            source_table,
+            group_name,
+            determinant_columns,
+            logical_table_role
+        FROM {q_ident(META_DB)}.logical_tables
+        WHERE database_name = %(database)s
+        ORDER BY logical_table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return [
+            {
+                "logical_table_name": row[0],
+                "source_table": row[1],
+                "group_name": row[2],
+                "determinant_columns": self.split_columns(row[3]),
+                "logical_table_role": row[4],
+            }
+            for row in rows
+        ]
+
+    def load_covered_source_columns(self) -> set[tuple[str, str]]:
+        sql = f"""
+        SELECT DISTINCT
+            source_table,
+            column_name
+        FROM {q_ident(META_DB)}.logical_table_columns
+        WHERE database_name = %(database)s
+        ORDER BY source_table, column_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return {(row[0], row[1]) for row in rows}
+
+    def load_source_columns(self) -> list[dict]:
+        sql = f"""
+        SELECT
+            table_name,
+            column_name,
+            column_type
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+          AND NOT startsWith(table_name, 'logical_')
+          AND NOT startsWith(column_name, '__')
+        ORDER BY table_name, column_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return [
+            {
+                "source_table": row[0],
+                "column_name": row[1],
+                "column_type": row[2],
+            }
+            for row in rows
+        ]
+
     def load_model_edges(self, model_id: str) -> list[dict]:
         """
         Return the joins that compose a stored decision model.
@@ -262,13 +351,24 @@ class CertificationReportExporter:
 
         best_model = report["best_model"]
         edges = self.load_model_edges(best_model["model_id"])
-        table_names = best_model["fact_tables"] + best_model["dimension_tables"]
+        coverage = report.get("coverage", {})
+        outside_table_names = [
+            table["logical_table_name"]
+            for table in coverage.get("logical_tables_outside_model", [])
+        ]
+        table_names = (
+            best_model["fact_tables"]
+            + best_model["dimension_tables"]
+            + outside_table_names
+            + [table["table_name"] for table in report.get("excluded_tables", [])]
+        )
         columns_by_table = self.load_model_columns(table_names)
         return self.format_model_schema(
             model=best_model,
             edges=edges,
             excluded_tables=report.get("excluded_tables", []),
             columns_by_table=columns_by_table,
+            coverage=coverage,
         )
 
     def print_best_model_schema(self, report: dict | None = None) -> str:
@@ -318,8 +418,10 @@ class CertificationReportExporter:
         edges: list[dict],
         excluded_tables: list[dict],
         columns_by_table: dict[str, list[dict]] | None = None,
+        coverage: dict | None = None,
     ) -> str:
         columns_by_table = columns_by_table or {}
+        coverage = coverage or {}
 
         lines = [
             "erDiagram",
@@ -330,18 +432,25 @@ class CertificationReportExporter:
 
         fact_tables = model.get("fact_tables", [])
         dimension_tables = model.get("dimension_tables", [])
+        outside_logical_tables = coverage.get("logical_tables_outside_model", [])
         table_aliases = CertificationReportExporter.build_mermaid_table_aliases(
             fact_tables,
             dimension_tables,
             excluded_tables,
+            outside_logical_tables,
         )
         table_roles = {
             **{table: "FACT" for table in fact_tables},
             **{table: "DIMENSION" for table in dimension_tables},
             **{table["table_name"]: table["role"] for table in excluded_tables},
+            **{
+                table["logical_table_name"]: table["logical_table_role"]
+                for table in outside_logical_tables
+            },
         }
 
-        for table in fact_tables + dimension_tables + [table["table_name"] for table in excluded_tables]:
+        lines.append("  %% Certified model tables")
+        for table in fact_tables + dimension_tables:
             lines.extend(
                 CertificationReportExporter.format_er_table(
                     table,
@@ -352,8 +461,46 @@ class CertificationReportExporter:
                 )
             )
 
+        if outside_logical_tables:
+            lines.append("  %% Other logical tables outside certified model")
+            for logical_table in outside_logical_tables:
+                table_name = logical_table["logical_table_name"]
+                lines.extend(
+                    CertificationReportExporter.format_er_table(
+                        table_name,
+                        table_aliases[table_name],
+                        table_roles[table_name],
+                        columns_by_table.get(table_name, []),
+                        edges,
+                    )
+                )
+
+        if excluded_tables:
+            lines.append("  %% Excluded isolated tables")
+            for table in excluded_tables:
+                table_name = table["table_name"]
+                lines.extend(
+                    CertificationReportExporter.format_er_table(
+                        table_name,
+                        table_aliases[table_name],
+                        table_roles[table_name],
+                        columns_by_table.get(table_name, []),
+                        edges,
+                    )
+                )
+
         for edge in edges:
             lines.append(CertificationReportExporter.format_er_relation(edge, table_aliases))
+
+        uncovered_columns = coverage.get("uncovered_columns", [])
+        if uncovered_columns:
+            lines.append("  %% Uncovered source columns")
+            for column in uncovered_columns:
+                lines.append(
+                    "  %% "
+                    f"{column['source_table']}.{column['column_name']} "
+                    f"({column['column_type']})"
+                )
 
         issues = model.get("issues", [])
         if issues:
@@ -427,7 +574,9 @@ class CertificationReportExporter:
         fact_tables: list[str],
         dimension_tables: list[str],
         excluded_tables: list[dict],
+        outside_logical_tables: list[dict] | None = None,
     ) -> dict[str, str]:
+        outside_logical_tables = outside_logical_tables or []
         aliases = {}
 
         for index, table_name in enumerate(fact_tables, start=1):
@@ -440,6 +589,9 @@ class CertificationReportExporter:
 
         for index, table in enumerate(excluded_tables, start=1):
             aliases[table["table_name"]] = f"EXCLUDED_TABLE_{index}"
+
+        for index, table in enumerate(outside_logical_tables, start=1):
+            aliases[table["logical_table_name"]] = f"OTHER_LOGICAL_TABLE_{index}"
 
         return aliases
 

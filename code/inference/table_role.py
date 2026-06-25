@@ -6,7 +6,7 @@ from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table, load_confirmed_adjacency_edges
 from core.naming import is_key_like_column
-from core.schema import normalize_clickhouse_type, q_ident
+from core.schema import is_numeric_type, q_ident
 
 logger = get_logger(__name__)
 
@@ -52,6 +52,7 @@ class TableRoleEngine:
         column_type_counts = self.load_column_type_counts()
         additive_measure_counts = self.load_additive_measure_counts()
         transactional_grain_tables = self.load_transactional_grain_tables()
+        logical_table_roles = self.load_logical_table_roles()
 
         results = []
 
@@ -79,18 +80,23 @@ class TableRoleEngine:
                 additive_measure_columns=additive_measure_columns,
             )
 
-            role, confidence, reason = self.classify_table(
-                row_count=row_count,
-                outgoing_edges=outgoing_count,
-                incoming_edges=incoming_count,
-                has_primary_key=has_primary_key,
-                numeric_columns=numeric_columns,
-                text_columns=text_columns,
-                date_columns=date_columns,
-                additive_measure_columns=additive_measure_columns,
-                has_transactional_grain=has_transactional_grain,
-                is_lookup_table=is_lookup_table,
-            )
+            if table_name in logical_table_roles:
+                role, confidence, reason = self.role_from_logical_table(
+                    logical_table_roles[table_name]
+                )
+            else:
+                role, confidence, reason = self.classify_table(
+                    row_count=row_count,
+                    outgoing_edges=outgoing_count,
+                    incoming_edges=incoming_count,
+                    has_primary_key=has_primary_key,
+                    numeric_columns=numeric_columns,
+                    text_columns=text_columns,
+                    date_columns=date_columns,
+                    additive_measure_columns=additive_measure_columns,
+                    has_transactional_grain=has_transactional_grain,
+                    is_lookup_table=is_lookup_table,
+                )
 
             results.append(
                 TableRoleCandidate(
@@ -227,6 +233,19 @@ class TableRoleEngine:
         Return tables for which a simple or composite key candidate exists.
         """
         return self.load_primary_key_tables()
+
+    def load_logical_table_roles(self) -> dict[str, str]:
+        sql = f"""
+        SELECT
+            logical_table_name,
+            anyLast(logical_table_role) AS logical_table_role
+        FROM {q_ident(META_DB)}.logical_tables
+        WHERE database_name = %(database)s
+        GROUP BY logical_table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return {row[0]: row[1] for row in rows if row[1]}
 
     def load_outgoing_edges(self) -> dict[str, int]:
         targets_by_source: dict[str, set[str]] = {}
@@ -451,13 +470,7 @@ class TableRoleEngine:
         if is_key_like_column(column_name):
             return False
 
-        normalized_type = normalize_clickhouse_type(column_type).lower()
-        if not (
-            normalized_type.startswith("int")
-            or normalized_type.startswith("uint")
-            or normalized_type.startswith("float")
-            or normalized_type.startswith("decimal")
-        ):
+        if not is_numeric_type(column_type):
             return False
 
         if distinct_count <= 1:
@@ -469,6 +482,28 @@ class TableRoleEngine:
         entropy = entropy_ratio or 0.0
         variation = abs(variation_coefficient or 0.0)
         return entropy >= 0.05 or variation >= 0.05
+
+    @staticmethod
+    def role_from_logical_table(logical_table_role: str) -> tuple[str, float, str]:
+        if logical_table_role == "FACT_CANDIDATE":
+            return (
+                "FACT",
+                0.9,
+                "role_inferred_from_logical_fact_candidate",
+            )
+
+        if logical_table_role == "DIMENSION_CANDIDATE":
+            return (
+                "DIMENSION",
+                0.9,
+                "role_inferred_from_logical_dimension_candidate",
+            )
+
+        return (
+            "UNKNOWN",
+            0.4,
+            "logical_table_role_is_not_decisive",
+        )
 
     @staticmethod
     def print_roles(results: list[TableRoleCandidate]) -> None:

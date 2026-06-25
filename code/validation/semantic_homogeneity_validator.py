@@ -4,28 +4,16 @@ from config.scoring import SEMANTIC_HOMOGENEITY_WEIGHTS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.naming import is_key_like_column as is_key_like_column_name
+from core.naming import (
+    is_key_like_column as is_key_like_column_name,
+)
+from core.naming import (
+    is_measure_like_column,
+)
 from core.schema import q_ident
 from inference.table_role import TableRoleCandidate
 
 logger = get_logger(__name__)
-
-MEASURE_KEYWORDS = {
-    "amount",
-    "price",
-    "cost",
-    "quantity",
-    "qty",
-    "total",
-    "margin",
-    "discount",
-    "tax",
-    "revenue",
-    "sales",
-    "profit",
-    "rate",
-    "score",
-}
 
 DESCRIPTIVE_KEYWORDS = {
     "name",
@@ -171,7 +159,7 @@ class SemanticHomogeneityValidator:
             if "Date" in col_type or "date" in col_lower:
                 continue
 
-            if any(kw in col_lower for kw in MEASURE_KEYWORDS):
+            if is_measure_like_column(col_name):
                 continue
 
             if "String" in col_type:

@@ -60,6 +60,32 @@ def make_db() -> MagicMock:
                 ),
             ]
         ),
+        SimpleNamespace(
+            result_rows=[
+                ("sales", "raw_sales", "sales_group", "sale_id", "FACT_CANDIDATE"),
+                ("customers", "raw_customers", "customers_group", "customer_id", "DIMENSION_CANDIDATE"),
+                ("products", "raw_products", "products_group", "product_id", "DIMENSION_CANDIDATE"),
+                ("returns", "raw_returns", "returns_group", "return_id", "FACT_CANDIDATE"),
+                ("audit_logical", "audit", "audit_group", "audit_id", "DIMENSION_CANDIDATE"),
+            ]
+        ),
+        SimpleNamespace(
+            result_rows=[
+                ("raw_sales", "sale_id"),
+                ("raw_sales", "amount"),
+                ("raw_customers", "customer_id"),
+                ("raw_customers", "customer_name"),
+            ]
+        ),
+        SimpleNamespace(
+            result_rows=[
+                ("raw_sales", "sale_id", "Int64"),
+                ("raw_sales", "amount", "Float64"),
+                ("raw_customers", "customer_id", "Int64"),
+                ("raw_customers", "customer_name", "String"),
+                ("raw_customers", "country", "String"),
+            ]
+        ),
     ]
     return db
 
@@ -81,6 +107,18 @@ def test_build_report_returns_best_model_and_rule_summary() -> None:
             "role": "ISOLATED",
             "confidence": 0.9,
             "reason": "table_has_no_confirmed_relationships",
+        }
+    ]
+    assert report["coverage"]["certified_model_tables"] == ["customers", "products", "sales"]
+    assert [
+        table["logical_table_name"]
+        for table in report["coverage"]["logical_tables_outside_model"]
+    ] == ["returns", "audit_logical"]
+    assert report["coverage"]["uncovered_columns"] == [
+        {
+            "source_table": "raw_customers",
+            "column_name": "country",
+            "column_type": "String",
         }
     ]
 
@@ -162,6 +200,24 @@ def test_format_model_schema_renders_mermaid_diagram() -> None:
             "geography": [
                 {"column_name": "country", "column_type": "String"},
             ],
+            "returns": [
+                {"column_name": "return_id", "column_type": "Int64"},
+            ],
+        },
+        coverage={
+            "logical_tables_outside_model": [
+                {
+                    "logical_table_name": "returns",
+                    "logical_table_role": "FACT_CANDIDATE",
+                }
+            ],
+            "uncovered_columns": [
+                {
+                    "source_table": "raw_customers",
+                    "column_name": "country",
+                    "column_type": "String",
+                }
+            ],
         },
     )
 
@@ -175,7 +231,11 @@ def test_format_model_schema_renders_mermaid_diagram() -> None:
     assert "Int64 customer_id PK" in schema
     assert 'DIMENSION_TABLE_1 ||--o{ FACT_TABLE : "customer_id = customer_id; ratio=1"' in schema
     assert "%% AGGREGATION_STABILITY [WARNING] model" in schema
+    assert "%% Other logical tables outside certified model" in schema
+    assert "OTHER_LOGICAL_TABLE_1 {" in schema
     assert "EXCLUDED_TABLE_1 {" in schema
+    assert "%% Uncovered source columns" in schema
+    assert "%% raw_customers.country (String)" in schema
     assert "```" not in schema
 
 
@@ -194,6 +254,9 @@ def test_write_mermaid_schema_writes_mmd_file(tmp_path) -> None:
                 ("sales", "customer_id", "Int64"),
                 ("customers", "customer_id", "Int64"),
                 ("customers", "customer_name", "String"),
+                ("returns", "return_id", "Int64"),
+                ("audit_logical", "audit_id", "Int64"),
+                ("geography", "country", "String"),
             ]
         ),
     ]

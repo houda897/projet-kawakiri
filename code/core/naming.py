@@ -4,6 +4,72 @@ import re
 
 TECHNICAL_KEY_TOKENS = {"id", "fk", "pk", "key"}
 KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref"}
+MEASURE_NAME_TOKENS = {
+    "amount",
+    "cost",
+    "discount",
+    "freight",
+    "margin",
+    "pct",
+    "percent",
+    "percentage",
+    "price",
+    "profit",
+    "quantity",
+    "qty",
+    "rate",
+    "revenue",
+    "sales",
+    "score",
+    "tax",
+    "total",
+    "value",
+    "montant",
+    "prix",
+    "taxe",
+    "quantite",
+    "remise",
+}
+GRAIN_NAME_TOKENS = {
+    "line",
+    "ligne",
+    "row",
+    "sequence",
+    "seq",
+}
+TEMPORAL_NAME_TOKENS = {
+    "date",
+    "day",
+    "jour",
+    "month",
+    "mois",
+    "quarter",
+    "trimestre",
+    "week",
+    "semaine",
+    "year",
+    "annee",
+}
+LOCATION_NAME_TOKENS = {
+    "address",
+    "adresse",
+    "city",
+    "country",
+    "postal",
+    "postcode",
+    "region",
+    "state",
+    "ville",
+    "zip",
+}
+ENTITY_ATTRIBUTE_TOKENS = {
+    "customer": {"segment", "type"},
+    "client": {"segment", "type"},
+    "product": {"brand", "category", "categorie", "sub", "subcategory"},
+    "produit": {"brand", "category", "categorie", "sub", "subcategory"},
+    "order": {"date", "mode", "ship", "shipping", "status"},
+    "commande": {"date", "mode", "ship", "shipping", "status"},
+}
 SEPARATOR_REGEX = re.compile(r"[_\-\s]+")
 CAMELCASE_KEY_SUFFIX_REGEX = re.compile(r"(?<=[a-z0-9])(ID|Id|FK|Fk|PK|Pk|Key|No|Ref)$")
 CAMELCASE_BOUNDARY_REGEX = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -51,6 +117,59 @@ def is_key_like_column(column_name: str | None) -> bool:
     Detect technical identifier columns without corrupting words like valid or rapid.
     """
     return any(token in KEY_LIKE_TOKENS for token in split_column_name_tokens(column_name))
+
+
+def is_measure_like_column(column_name: str | None) -> bool:
+    """
+    Detect business measure names without duplicating measure vocabularies.
+    """
+    tokens = split_column_name_tokens(column_name)
+    if any(token in MEASURE_NAME_TOKENS for token in tokens):
+        return True
+
+    normalized = (column_name or "").lower()
+    return any(token in normalized for token in MEASURE_NAME_TOKENS)
+
+
+def is_grain_like_column(column_name: str | None) -> bool:
+    """
+    Detect row-grain or sequence columns that identify a fact level but are not measures.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in GRAIN_NAME_TOKENS for token in tokens)
+
+
+def is_temporal_like_column(column_name: str | None) -> bool:
+    """
+    Detect calendar/date semantic columns from their name.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in TEMPORAL_NAME_TOKENS for token in tokens)
+
+
+def is_location_like_column(column_name: str | None) -> bool:
+    """
+    Detect geographic/address attributes that naturally belong together.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in LOCATION_NAME_TOKENS for token in tokens)
+
+
+def belongs_to_key_concept(key_column: str | None, attribute_column: str | None) -> bool:
+    """
+    Return True when an attribute naturally describes the entity named by a key.
+    """
+    key_tokens = set(normalize_key_concept_tokens(key_column))
+    attribute_tokens = set(split_column_name_tokens(attribute_column))
+
+    if key_tokens and attribute_tokens & key_tokens:
+        return True
+
+    for key_token in key_tokens:
+        if attribute_tokens & ENTITY_ATTRIBUTE_TOKENS.get(key_token, set()):
+            return True
+
+    return is_location_like_column(key_column) and is_location_like_column(attribute_column)
 
 
 def normalize_key_concept(column_name: str | None) -> str:

@@ -33,15 +33,6 @@ EVALUATE_CANDIDATES = {
     # Calculation for margin -> 1.1 = tolerate 10% more than the pk
 }
 
-FUNCTIONAL_GROUPING_SETTINGS = {
-    # Limit determinant candidates to avoid combinatorial explosion on wide raw tables.
-    "MAX_DETERMINANTS_PER_TABLE": 12,
-    # Composite determinants are tested only when no single-column determinant works.
-    "MAX_DETERMINANT_WIDTH": 3,
-    # A logical group must explain at least this many dependent columns.
-    "MIN_DEPENDENT_COLUMNS": 1,
-}
-
 INGESTION_SETTINGS = {
     # Keep CSV ingestion robust by default: temporal values stay as String unless
     # this option is enabled for datasets with stable date/date-time formats.

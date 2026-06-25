@@ -1,5 +1,6 @@
 from inference.functional_group_builder import FunctionalColumnGroup
-from modeling.logical_table_builder import LogicalTableBuilder
+from modeling.fact_dimension_builder import FACT_CANDIDATE
+from modeling.logical_table_builder import LogicalTable, LogicalTableBuilder
 
 
 class FakeDb:
@@ -56,6 +57,29 @@ def test_store_logical_tables_records_table_and_column_metadata() -> None:
     column_insert = db.inserts[1]
     assert table_insert[1][0][1] == "logical_observations_fact"
     assert table_insert[1][0][4] == "station_id,date_id"
+    assert table_insert[1][0][5] == "DIMENSION_CANDIDATE"
     assert "determinant_columns" in table_insert[2]
+    assert "logical_table_role" in table_insert[2]
     assert "is_determinant" in column_insert[2]
     assert len(column_insert[1]) == 3
+
+
+def test_materialize_fact_table_preserves_source_grain() -> None:
+    db = FakeDb()
+    builder = LogicalTableBuilder(db)
+    logical_table = LogicalTable(
+        database_name="lab_db",
+        logical_table_name="logical_order_details_fact",
+        source_table="order_details",
+        group_name="logical_order_details_fact",
+        determinant_columns=("order_id", "product_id"),
+        columns=("order_id", "product_id", "quantity", "unit_price"),
+        logical_table_role=FACT_CANDIDATE,
+        distinct_rows=False,
+    )
+
+    builder.materialize(logical_table)
+
+    create_sql = db.commands[1]
+    assert "SELECT DISTINCT" not in create_sql
+    assert "SELECT `order_id`, `product_id`, `quantity`, `unit_price`" in create_sql

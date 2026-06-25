@@ -368,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     logical_tables_parser = subparsers.add_parser(
         "build-logical-tables",
-        help="Materialize functional column groups as logical ClickHouse tables",
+        help="Materialize logical dimension and fact candidates in ClickHouse",
     )
     logical_tables_parser.set_defaults(handler=lambda args: run_logical_table_building())
 
