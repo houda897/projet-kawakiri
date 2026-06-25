@@ -312,7 +312,28 @@ def test_sales_source_becomes_fact_with_keys_grain_and_measures() -> None:
     )
 
 
-def test_contextual_dimensions_move_descriptive_columns_out_of_fact() -> None:
+def test_contextual_dimensions_move_descriptive_columns_out_of_fact(monkeypatch) -> None:
+    dependencies = {
+        ("Product_ID",): {"Product_Name", "Category", "Sub_Category"},
+        ("Customer_ID",): {"Customer_Name", "Segment"},
+        ("Postal_Code",): {"City", "Country", "State", "Region"},
+    }
+
+    def fake_check_column_dependency(
+        database,
+        table,
+        determinant_columns,
+        dependent_column,
+        db_manager,
+        max_violations=0,
+    ):
+        return dependent_column in dependencies.get(tuple(determinant_columns), set())
+
+    monkeypatch.setattr(
+        "modeling.fact_dimension_builder.check_column_dependency",
+        fake_check_column_dependency,
+    )
+
     builder = FactDimensionBuilder(FakeDb())
     profiles = {
         "superstore": [
@@ -394,3 +415,80 @@ def test_contextual_dimensions_move_descriptive_columns_out_of_fact() -> None:
         "Discount",
         "Profit",
     )
+
+
+def test_contextual_dimension_enrichment_requires_functional_dependency(monkeypatch) -> None:
+    def fake_check_column_dependency(
+        database,
+        table,
+        determinant_columns,
+        dependent_column,
+        db_manager,
+        max_violations=0,
+    ):
+        return False
+
+    monkeypatch.setattr(
+        "modeling.fact_dimension_builder.check_column_dependency",
+        fake_check_column_dependency,
+    )
+
+    builder = FactDimensionBuilder(FakeDb())
+    profiles = {
+        "sales": [
+            make_profile("sales", "product_id", uniqueness_ratio=0.2),
+            make_profile("sales", "product_name", uniqueness_ratio=0.2),
+        ]
+    }
+    product_dimension = LogicalTablePlan(
+        database_name="db",
+        logical_table_name="logical_sales_product_id",
+        source_table="sales",
+        group_name="logical_sales_product_id",
+        determinant_columns=("product_id",),
+        columns=("product_id",),
+        logical_table_role=DIMENSION_CANDIDATE,
+        distinct_rows=True,
+    )
+
+    dimensions = builder.enrich_dimension_tables([product_dimension], profiles)
+
+    assert dimensions[0].columns == ("product_id",)
+
+
+def test_raw_table_with_measures_does_not_become_fallback_dimension() -> None:
+    profiles = {
+        "ventes_raw": [
+            make_profile("ventes_raw", "id_ligne", uniqueness_ratio=1.0),
+            make_profile("ventes_raw", "client_id", uniqueness_ratio=0.2),
+            make_profile("ventes_raw", "product_id", uniqueness_ratio=0.4),
+            make_profile("ventes_raw", "customer_name", uniqueness_ratio=0.2),
+            make_profile("ventes_raw", "sales", "Float64", uniqueness_ratio=0.8),
+            make_profile("ventes_raw", "quantity", "Int64", uniqueness_ratio=0.05),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
+        profiles,
+        existing_dimensions=[],
+    )
+
+    assert plans == []
+
+
+def test_single_grain_table_with_measure_can_be_fact() -> None:
+    profiles = {
+        "daily_balance": [
+            make_profile("daily_balance", "account_id"),
+            make_profile("daily_balance", "amount", "Float64"),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == FACT_CANDIDATE

@@ -451,17 +451,16 @@ class FunctionalGroupBuilder:
     ) -> list[FunctionalColumnGroup]:
         profiles_by_name = profiles_by_name or {}
         assigned_columns = set(already_assigned or set())
+        groups = sorted(
+            groups,
+            key=lambda group: FunctionalGroupBuilder.score_group(group, profiles_by_name),
+            reverse=True,
+        )
         preferred_group_by_dependent = (
             FunctionalGroupBuilder.preferred_group_by_dependent(
                 groups,
                 profiles_by_name,
             )
-        )
-
-        groups = sorted(
-            groups,
-            key=lambda group: FunctionalGroupBuilder.score_group(group, profiles_by_name),
-            reverse=True,
         )
         selected = []
 
