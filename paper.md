@@ -205,9 +205,7 @@ deliberately isolated table), asserting that table-role classification, join
 inference, and final certification status match the expected model. Each pipeline
 stage and validation rule is implemented and tested as an independent unit, and the
 certification report format is designed so that new structural rules can be added
-without changing the report schema. The project is not yet publicly released; prior to
-JOSS submission the repository will be made available under an OSI-approved open-source
-license, which is itself a JOSS eligibility requirement independent of this paper.
+without changing the report schema.
 
 ## AI usage disclosure
 
