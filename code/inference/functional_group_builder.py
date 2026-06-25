@@ -10,10 +10,12 @@ from core.logger import get_logger
 from core.meta import clear_metadata_table
 from core.naming import (
     belongs_to_key_concept,
+    is_descriptive_candidate,
     is_grain_like_column,
     is_key_like_column,
     is_location_like_column,
-    is_measure_like_column,
+    is_lookup_key_candidate,
+    is_measure_candidate,
     is_temporal_like_column,
 )
 from core.schema import is_temporal_type, q_ident
@@ -31,6 +33,9 @@ class FunctionalColumnProfile:
     distinct_count: int
     uniqueness_ratio: float
     identifiability_score: float
+    entropy_ratio: float = 0.0
+    variation_coefficient: float = 0.0
+    skewness_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -336,12 +341,32 @@ class FunctionalGroupBuilder:
             p.null_ratio,
             p.distinct_count,
             p.uniqueness_ratio,
-            coalesce(i.identifiability_score, 0.0) AS identifiability_score
+            coalesce(i.identifiability_score, 0.0) AS identifiability_score,
+            coalesce(s.entropy_ratio, 0.0) AS entropy_ratio,
+            coalesce(s.variation_coefficient, 0.0) AS variation_coefficient,
+            coalesce(s.skewness_score, 0.0) AS skewness_score
         FROM {q_ident(META_DB)}.column_profiles AS p
         LEFT JOIN {q_ident(META_DB)}.identifiability_scores AS i
             ON p.database_name = i.database_name
            AND p.table_name = i.table_name
            AND p.column_name = i.column_name
+        LEFT JOIN (
+            SELECT
+                database_name,
+                table_name,
+                column_name,
+                max(run_ts) AS latest_run_ts
+            FROM {q_ident(META_DB)}.column_stats
+            GROUP BY database_name, table_name, column_name
+        ) AS latest
+            ON p.database_name = latest.database_name
+        AND p.table_name = latest.table_name
+        AND p.column_name = latest.column_name
+        LEFT JOIN {q_ident(META_DB)}.column_stats AS s
+            ON s.database_name = latest.database_name
+        AND s.table_name = latest.table_name
+        AND s.column_name = latest.column_name
+        AND s.run_ts = latest.latest_run_ts
         WHERE p.database_name = %(database)s
           AND NOT startsWith(p.column_name, '__')
         ORDER BY p.table_name, p.column_name
@@ -361,6 +386,9 @@ class FunctionalGroupBuilder:
                     distinct_count=row[5],
                     uniqueness_ratio=row[6],
                     identifiability_score=row[7],
+                    entropy_ratio=row[8],
+                    variation_coefficient=row[9],
+                    skewness_score=row[10],
                 )
             )
 
@@ -384,10 +412,11 @@ class FunctionalGroupBuilder:
                 not is_temporal_like_column(profile.column_name)
                 or is_key_like_column(profile.column_name)
             )
-            and not is_measure_like_column(profile.column_name)
+            and not is_measure_candidate(profile)
         ]
         candidates.sort(
             key=lambda profile: (
+                is_lookup_key_candidate(profile),
                 profile.identifiability_score,
                 profile.uniqueness_ratio,
                 profile.distinct_count,
@@ -437,9 +466,11 @@ class FunctionalGroupBuilder:
     def is_invalid_dependent_column(dependent: FunctionalColumnProfile) -> bool:
         if is_key_like_column(dependent.column_name):
             return True
-        if is_measure_like_column(dependent.column_name):
+        if is_measure_candidate(dependent):
             return True
         if is_grain_like_column(dependent.column_name):
+            return True
+        if not is_descriptive_candidate(dependent):
             return True
         return False
 
@@ -529,7 +560,7 @@ class FunctionalGroupBuilder:
         descriptive_richness = sum(
             1
             for profile in dependent_profiles
-            if not is_measure_like_column(profile.column_name)
+            if is_descriptive_candidate(profile)
         )
         measure_dependents = len(dependent_profiles) - descriptive_richness
 

@@ -123,6 +123,8 @@ class SemanticHomogeneityValidator:
     def check_fact_homogeneity(self, table_name: str) -> dict:
         """Prove that a fact table doesn't contain dimension attributes"""
 
+        fact_fk_columns = self.load_fact_fk_columns(table_name)
+
         sql = f"""
         SELECT
             cs.column_name,
@@ -152,6 +154,9 @@ class SemanticHomogeneityValidator:
         for row in rows:
             col_name, col_type, entropy, cv, null_ratio, uniqueness_ratio = row
             col_lower = col_name.lower()
+
+            if col_name in fact_fk_columns:
+                continue
 
             if self.is_key_like_column(col_name):
                 continue
@@ -219,6 +224,24 @@ class SemanticHomogeneityValidator:
             "reason": reason_str,
         }
 
+    def load_fact_fk_columns(self, table_name: str) -> set[str]:
+        sql = f"""
+        SELECT source_columns
+        FROM {q_ident(META_DB)}.decision_model_edges
+        WHERE database_name = %(db)s
+          AND source_table = %(table)s
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"db": self.database_name, "table": table_name},
+        ).result_rows
+
+        columns = set()
+        for row in rows:
+            columns.update(self.split_columns(row[0]))
+        return columns
+
     def check_homogeneity(self, raw_roles: list[TableRoleCandidate]) -> list:
         reports = []
         for role in raw_roles:
@@ -231,6 +254,10 @@ class SemanticHomogeneityValidator:
             else:
                 logger.warning("Unsupported table role for semantic homogeneity: %s", role.role)
         return reports
+
+    @staticmethod
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
 
     def store_homogeneity(self, reports: list[dict]) -> None:
         """

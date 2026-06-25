@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+from typing import Any
+
+from core.schema import is_continuous_numeric_type, is_numeric_type, is_temporal_type
 
 TECHNICAL_KEY_TOKENS = {"id", "fk", "pk", "key"}
 KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref"}
@@ -55,6 +58,10 @@ LOCATION_NAME_TOKENS = {
     "adresse",
     "city",
     "country",
+    "lat",
+    "latitude",
+    "lon",
+    "longitude",
     "postal",
     "postcode",
     "region",
@@ -237,3 +244,157 @@ def is_partition_like_table_pair(left_table: str | None, right_table: str | None
         return False
 
     return left_tokens != left_without_year and right_tokens != right_without_year
+
+
+def is_measure_candidate(profile: Any) -> bool:
+    """
+    Detect likely measures from statistical shape first, with names as weak hints.
+    """
+    return measure_candidate_score(profile) >= 0.4
+
+
+def measure_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column behaves like an observable measure.
+
+    Names are only a weak bonus: numeric shape, dispersion and information
+    spread carry the decision.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+    entropy_ratio = float(_profile_attr(profile, "entropy_ratio", 0.0) or 0.0)
+    variation_coefficient = float(
+        _profile_attr(profile, "variation_coefficient", 0.0) or 0.0,
+    )
+
+    if distinct_count <= 1:
+        return 0.0
+    if not is_numeric_type(column_type):
+        return 0.0
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        return 0.0
+    if is_location_like_column(column_name):
+        return 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        return 0.0
+
+    score = 0.2
+    if is_continuous_numeric_type(column_type):
+        score += 0.2
+    score += min(max(uniqueness_ratio, 0.0), 1.0) * 0.4
+    score += min(max(entropy_ratio, 0.0), 1.0) * 0.25
+    score += min(max(variation_coefficient, 0.0), 1.0) * 0.3
+    if distinct_count >= 3:
+        score += 0.1
+    if is_measure_like_column(column_name):
+        score += 0.1
+
+    return min(score, 1.0)
+
+
+def is_grain_candidate(profile: Any) -> bool:
+    """
+    Detect columns that can help define the observation grain of a fact table.
+    """
+    return grain_candidate_score(profile) >= 0.5
+
+
+def grain_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column can participate in the observation grain.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    null_ratio = float(_profile_attr(profile, "null_ratio", 0.0) or 0.0)
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+
+    if null_ratio > 0.2 or distinct_count <= 1:
+        return 0.0
+    if is_measure_candidate(profile):
+        return 0.0
+
+    score = 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        score += 0.6
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        score += 0.55
+    if uniqueness_ratio >= 0.95:
+        score += 0.55
+
+    return min(score, 1.0)
+
+
+def is_descriptive_candidate(profile: Any) -> bool:
+    """
+    Detect attributes that can describe a dimension after FD validation.
+    """
+    return descriptive_candidate_score(profile) >= 0.35
+
+
+def descriptive_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column behaves like a descriptive dimension attribute.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+
+    if distinct_count <= 1 and not is_location_like_column(column_name):
+        return 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        return 0.0
+    if is_measure_candidate(profile):
+        return 0.0
+    if uniqueness_ratio >= 0.95:
+        return 0.0
+
+    score = 0.35
+    score += max(0.0, 1.0 - uniqueness_ratio) * 0.25
+    if is_location_like_column(column_name):
+        score += 0.15
+
+    return min(score, 1.0)
+
+
+def is_lookup_key_candidate(profile: Any) -> bool:
+    """
+    Detect columns that can carry a dimension key in raw or logical tables.
+    """
+    return lookup_key_candidate_score(profile) >= 0.5
+
+
+def lookup_key_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column can carry a dimension lookup key.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    null_ratio = float(_profile_attr(profile, "null_ratio", 0.0) or 0.0)
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+    identifiability_score = float(
+        _profile_attr(profile, "identifiability_score", 0.0) or 0.0,
+    )
+
+    if null_ratio > 0.05 or distinct_count <= 1:
+        return 0.0
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        return 0.0
+    if is_measure_candidate(profile) or is_grain_like_column(column_name):
+        return 0.0
+
+    score = 0.0
+    if is_key_like_column(column_name):
+        score += 0.55
+    if 0.01 <= uniqueness_ratio < 0.95:
+        score += 0.25
+    score += min(max(identifiability_score, 0.0), 1.0) * 0.25
+
+    return min(score, 1.0)
+
+
+def _profile_attr(profile: Any, name: str, default: Any) -> Any:
+    return getattr(profile, name, default)

@@ -66,8 +66,17 @@ class PrimaryKeyEngine:
             low_cardinality_columns=low_cardinality_columns,
         )
 
-        all_candidates = simple_candidates + composite_candidates
+        logical_table_candidates = self.infer_logical_table_key_candidates(
+            threshold=threshold,
+            low_cardinality_columns=low_cardinality_columns,
+        )
+
+        all_candidates = simple_candidates + composite_candidates + logical_table_candidates
         best_by_table = self.ranking_policy.select_best_by_table(all_candidates)
+        best_by_table = self.apply_logical_table_key_overrides(
+            best_by_table,
+            logical_table_candidates,
+        )
 
         return [self.to_primary_key_candidate(candidate) for candidate in best_by_table.values()]
 
@@ -128,6 +137,171 @@ class PrimaryKeyEngine:
             )
 
         return self.ranking_policy.rank(candidates)
+
+    def infer_logical_table_key_candidates(
+        self,
+        *,
+        threshold: float,
+        low_cardinality_columns: set[tuple[str, str]],
+    ) -> list[RankedKeyCandidate]:
+        """
+        Build key candidates from materialized logical table determinants.
+
+        Logical dimensions are created from a stable determinant. If that
+        determinant is composite, a nearly unique single column must not replace
+        it, otherwise later joins lose one FK column and can fan out.
+        """
+
+        sql = f"""
+        SELECT
+            logical_table_name,
+            determinant_columns
+        FROM {q_ident(META_DB)}.logical_tables
+        WHERE database_name = %(database)s
+          AND logical_table_role = 'DIMENSION_CANDIDATE'
+          AND determinant_columns != ''
+        ORDER BY logical_table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        candidates = []
+
+        for table_name, determinant_columns in rows:
+            column_names = self.split_columns(determinant_columns)
+            if not column_names:
+                continue
+
+            column_types = self.load_column_types(table_name, column_names)
+            if len(column_types) != len(column_names):
+                continue
+
+            rows_count, null_ratio, uniqueness_ratio = self.compute_key_shape(
+                table_name,
+                column_names,
+            )
+            if rows_count <= 0:
+                continue
+            if null_ratio > 0.000001 or uniqueness_ratio < threshold:
+                continue
+
+            candidates.append(
+                self.ranking_policy.build_candidate(
+                    database_name=CH_DB,
+                    table_name=table_name,
+                    column_names=column_names,
+                    column_types=column_types,
+                    rows=rows_count,
+                    null_ratio=null_ratio,
+                    uniqueness_ratio=uniqueness_ratio,
+                    identifiability_score=self.load_mean_identifiability_score(
+                        table_name,
+                        column_names,
+                    ),
+                    low_cardinality_columns=low_cardinality_columns,
+                )
+            )
+
+        return self.ranking_policy.rank(candidates)
+
+    def load_column_types(
+        self,
+        table_name: str,
+        column_names: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """
+        Load ClickHouse types for the requested columns in determinant order.
+        """
+
+        sql = """
+        SELECT name, type
+        FROM system.columns
+        WHERE database = %(database)s
+          AND table = %(table)s
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "table": table_name},
+        ).result_rows
+        type_by_column = {row[0]: row[1] for row in rows}
+
+        return tuple(
+            type_by_column[column_name]
+            for column_name in column_names
+            if column_name in type_by_column
+        )
+
+    def compute_key_shape(
+        self,
+        table_name: str,
+        column_names: tuple[str, ...],
+    ) -> tuple[int, float, float]:
+        """
+        Compute completeness and uniqueness for a determinant tuple.
+        """
+
+        null_checks = " OR ".join(
+            f"isNull({q_ident(column_name)})" for column_name in column_names
+        )
+        tuple_expression = ", ".join(q_ident(column_name) for column_name in column_names)
+
+        sql = f"""
+        SELECT
+            count() AS rows,
+            countIf({null_checks}) AS null_rows,
+            uniqExact(tuple({tuple_expression})) AS distinct_rows
+        FROM {q_ident(CH_DB)}.{q_ident(table_name)}
+        """
+
+        row = self.db.query(sql).result_rows[0]
+        rows_count = int(row[0] or 0)
+        if rows_count <= 0:
+            return 0, 1.0, 0.0
+
+        null_ratio = float(row[1] or 0) / rows_count
+        uniqueness_ratio = float(row[2] or 0) / rows_count
+        return rows_count, null_ratio, uniqueness_ratio
+
+    def load_mean_identifiability_score(
+        self,
+        table_name: str,
+        column_names: tuple[str, ...],
+    ) -> float:
+        """
+        Average stored identifiability evidence for determinant columns.
+        """
+
+        quoted_columns = ", ".join(repr(column_name) for column_name in column_names)
+        sql = f"""
+        SELECT coalesce(avg(identifiability_score), 0.0)
+        FROM {q_ident(META_DB)}.identifiability_scores
+        WHERE database_name = %(database)s
+          AND table_name = %(table)s
+          AND column_name IN ({quoted_columns})
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "table": table_name},
+        ).result_rows
+        if not rows:
+            return 0.0
+
+        return float(rows[0][0] or 0.0)
+
+    @staticmethod
+    def apply_logical_table_key_overrides(
+        best_by_table: dict[str, RankedKeyCandidate],
+        logical_table_candidates: list[RankedKeyCandidate],
+    ) -> dict[str, RankedKeyCandidate]:
+        """
+        Prefer logical dimension determinants over accidental simple keys.
+        """
+
+        for candidate in logical_table_candidates:
+            best_by_table[candidate.table_name] = candidate
+
+        return best_by_table
 
     def find_tables_without_candidates(
         self,
@@ -273,6 +447,10 @@ class PrimaryKeyEngine:
             return "composite"
 
         return "simple"
+
+    @staticmethod
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
 
     @staticmethod
     def print_candidates(candidates: list[PrimaryKeyCandidate]) -> None:

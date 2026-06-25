@@ -456,6 +456,120 @@ def test_contextual_dimension_enrichment_requires_functional_dependency(monkeypa
     assert dimensions[0].columns == ("product_id",)
 
 
+def test_unstable_descriptive_column_promotes_dimension_to_composite_key(
+    monkeypatch,
+) -> None:
+    def fake_check_column_dependency(
+        database,
+        table,
+        determinant_columns,
+        dependent_column,
+        db_manager,
+        max_violations=0,
+    ):
+        return tuple(determinant_columns) == (
+            "Product_ID",
+            "Product_Name",
+        ) and dependent_column in {
+            "Category",
+            "Sub_Category",
+        }
+
+    monkeypatch.setattr(
+        "modeling.fact_dimension_builder.check_column_dependency",
+        fake_check_column_dependency,
+    )
+
+    builder = FactDimensionBuilder(FakeDb())
+    dimensions = [
+        LogicalTablePlan(
+            database_name="db",
+            logical_table_name="logical_superstore_product_id",
+            source_table="superstore",
+            group_name="logical_superstore_product_id",
+            determinant_columns=("Product_ID",),
+            columns=("Product_ID", "Category", "Sub_Category"),
+            logical_table_role=DIMENSION_CANDIDATE,
+            distinct_rows=True,
+        )
+    ]
+    profiles = {
+        "superstore": [
+            make_profile("superstore", "Product_ID", uniqueness_ratio=0.18),
+            make_profile("superstore", "Product_Name", uniqueness_ratio=0.18),
+            make_profile("superstore", "Category", uniqueness_ratio=0.0003),
+            make_profile("superstore", "Sub_Category", uniqueness_ratio=0.0017),
+            make_profile("superstore", "Sales", "Float64", uniqueness_ratio=0.9),
+            make_profile("superstore", "Row_ID", uniqueness_ratio=1.0),
+        ]
+    }
+
+    promoted = builder.promote_composite_dimension_keys(dimensions, profiles)
+    facts = builder.build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=promoted,
+    )
+
+    assert promoted[0].determinant_columns == ("Product_ID", "Product_Name")
+    assert promoted[0].columns == (
+        "Product_ID",
+        "Product_Name",
+        "Category",
+        "Sub_Category",
+    )
+    assert facts[0].columns == ("Product_ID", "Product_Name", "Sales", "Row_ID")
+
+
+def test_composite_key_column_stays_in_fact_even_if_dependent_elsewhere() -> None:
+    profiles = {
+        "superstore": [
+            make_profile("superstore", "Order_ID", uniqueness_ratio=0.5),
+            make_profile("superstore", "Postal_Code", uniqueness_ratio=0.06),
+            make_profile("superstore", "City", uniqueness_ratio=0.05),
+            make_profile("superstore", "Country", uniqueness_ratio=0.0001),
+            make_profile("superstore", "Sales", "Float64", uniqueness_ratio=0.9),
+            make_profile("superstore", "Row_ID", uniqueness_ratio=1.0),
+        ]
+    }
+    dimensions = [
+        LogicalTablePlan(
+            database_name="db",
+            logical_table_name="logical_superstore_order_id",
+            source_table="superstore",
+            group_name="logical_superstore_order_id",
+            determinant_columns=("Order_ID",),
+            columns=("Order_ID", "City"),
+            logical_table_role=DIMENSION_CANDIDATE,
+            distinct_rows=True,
+        ),
+        LogicalTablePlan(
+            database_name="db",
+            logical_table_name="logical_superstore_postal_code_city",
+            source_table="superstore",
+            group_name="logical_superstore_postal_code_city",
+            determinant_columns=("Postal_Code", "City"),
+            columns=("Postal_Code", "City", "Country"),
+            logical_table_role=DIMENSION_CANDIDATE,
+            distinct_rows=True,
+        ),
+    ]
+
+    facts = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=dimensions,
+    )
+
+    assert facts[0].columns == (
+        "Order_ID",
+        "Postal_Code",
+        "City",
+        "Sales",
+        "Row_ID",
+    )
+
+
 def test_raw_table_with_measures_does_not_become_fallback_dimension() -> None:
     profiles = {
         "ventes_raw": [
@@ -492,3 +606,30 @@ def test_single_grain_table_with_measure_can_be_fact() -> None:
 
     assert len(plans) == 1
     assert plans[0].logical_table_role == FACT_CANDIDATE
+
+
+def test_ocean_observations_become_fact_without_erp_measure_names() -> None:
+    profiles = {
+        "ocean_observations": [
+            make_profile("ocean_observations", "station_id"),
+            make_profile("ocean_observations", "observed_at", "DateTime", uniqueness_ratio=0.8),
+            make_profile("ocean_observations", "temperature", "Float64", uniqueness_ratio=0.7),
+            make_profile("ocean_observations", "salinity", "Float64", uniqueness_ratio=0.6),
+            make_profile("ocean_observations", "quality_flag", distinct_count=3, uniqueness_ratio=0.03),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == FACT_CANDIDATE
+    assert plans[0].columns == (
+        "station_id",
+        "observed_at",
+        "temperature",
+        "salinity",
+    )
