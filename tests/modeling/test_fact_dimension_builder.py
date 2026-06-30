@@ -282,6 +282,100 @@ def test_products_source_becomes_complete_fallback_dimension() -> None:
     )
 
 
+def test_lookup_dimension_keeps_numeric_attributes() -> None:
+    profiles = {
+        "products": [
+            make_profile(
+                "products",
+                "product_id",
+                uniqueness_ratio=1.0,
+                identifiability_score=1.0,
+            ),
+            make_profile("products", "product_name", uniqueness_ratio=1.0),
+            make_profile("products", "product_cost", "Float64", uniqueness_ratio=0.6),
+            make_profile("products", "product_price", "Float64", uniqueness_ratio=0.7),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
+        profiles,
+        existing_dimensions=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == DIMENSION_CANDIDATE
+    assert plans[0].columns == (
+        "product_id",
+        "product_name",
+        "product_cost",
+        "product_price",
+    )
+
+
+def test_lookup_source_with_numeric_attribute_does_not_become_fact() -> None:
+    profiles = {
+        "categories_source": [
+            make_profile(
+                "categories_source",
+                "id",
+                "Int64",
+                uniqueness_ratio=1.0,
+                identifiability_score=1.0,
+            ),
+            make_profile("categories_source", "nom", uniqueness_ratio=1.0),
+            make_profile("categories_source", "priorite", "Int64", uniqueness_ratio=1.0),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=[],
+    )
+
+    assert plans == []
+
+
+def test_complete_fallback_dimension_is_created_despite_partial_group() -> None:
+    profiles = {
+        "products": [
+            make_profile(
+                "products",
+                "product_id",
+                uniqueness_ratio=1.0,
+                identifiability_score=1.0,
+            ),
+            make_profile("products", "product_name"),
+            make_profile("products", "brand"),
+            make_profile("products", "category"),
+        ]
+    }
+    partial_dimension = LogicalTablePlan(
+        database_name="db",
+        logical_table_name="logical_products_brand",
+        source_table="products",
+        group_name="logical_products_brand",
+        determinant_columns=("brand",),
+        columns=("brand", "category"),
+        logical_table_role=DIMENSION_CANDIDATE,
+        distinct_rows=True,
+    )
+
+    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
+        profiles,
+        existing_dimensions=[partial_dimension],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_name == "logical_products_product_id"
+    assert plans[0].columns == (
+        "product_id",
+        "product_name",
+        "brand",
+        "category",
+    )
+
+
 def test_sales_source_becomes_fact_with_keys_grain_and_measures() -> None:
     profiles = {
         "sales": [

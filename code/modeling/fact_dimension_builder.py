@@ -286,20 +286,30 @@ class FactDimensionBuilder:
         profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
         existing_dimensions: list[LogicalTablePlan],
     ) -> list[LogicalTablePlan]:
-        dimension_sources = {dimension.source_table for dimension in existing_dimensions}
+        existing_dimension_keys = {
+            (dimension.source_table, dimension.determinant_columns)
+            for dimension in existing_dimensions
+        }
         fallback_dimensions = []
 
         for source_table, profiles in profiles_by_table.items():
-            if source_table in dimension_sources:
-                continue
             if not self.is_descriptive_source_table(source_table, profiles):
                 continue
 
             key_profile = self.select_dimension_key_profile(profiles)
             if key_profile is None:
                 continue
+            determinant_columns = (key_profile.column_name,)
+            if (source_table, determinant_columns) in existing_dimension_keys:
+                continue
 
-            columns = tuple(profile.column_name for profile in profiles)
+            columns = self.select_complete_dimension_columns(
+                profiles,
+                key_profile.column_name,
+            )
+            if len(columns) <= 1:
+                continue
+
             fallback_dimensions.append(
                 LogicalTablePlan(
                     database_name=CH_DB,
@@ -312,12 +322,13 @@ class FactDimensionBuilder:
                         source_table,
                         key_profile.column_name,
                     ),
-                    determinant_columns=(key_profile.column_name,),
+                    determinant_columns=determinant_columns,
                     columns=columns,
                     logical_table_role=DIMENSION_CANDIDATE,
                     distinct_rows=True,
                 )
             )
+            existing_dimension_keys.add((source_table, determinant_columns))
 
         return fallback_dimensions
 
@@ -333,6 +344,11 @@ class FactDimensionBuilder:
 
         facts = []
         for source_table, profiles in profiles_by_table.items():
+            if (
+                self.is_descriptive_source_table(source_table, profiles)
+                and not dimensions_by_source.get(source_table)
+            ):
+                continue
             if not self.is_transactional_source_table(source_table, profiles):
                 continue
 
@@ -557,9 +573,6 @@ class FactDimensionBuilder:
         source_table: str,
         profiles: Sequence[FunctionalColumnProfile],
     ) -> bool:
-        if FactDimensionBuilder.is_transactional_source_table(source_table, profiles):
-            return False
-
         key_profile = FactDimensionBuilder.select_dimension_key_profile(profiles)
         if key_profile is None:
             return False
@@ -567,8 +580,33 @@ class FactDimensionBuilder:
         measure_columns = [
             profile
             for profile in profiles
-            if is_measure_candidate(profile)
+            if profile.column_name != key_profile.column_name
+            and is_measure_candidate(profile)
         ]
+        other_grain_columns = [
+            profile
+            for profile in profiles
+            if profile.column_name != key_profile.column_name
+            and FactDimensionBuilder.is_grain_signal_column(
+                profile.column_name,
+                profile,
+            )
+        ]
+
+        # A clean lookup can have numeric attributes, but a table with measures
+        # and several non-key grain columns is an event table, not a dimension.
+        if measure_columns and len(other_grain_columns) >= 2:
+            return False
+
+        if FactDimensionBuilder.has_lookup_attribute_columns(
+            profiles,
+            key_profile.column_name,
+        ):
+            return True
+
+        if FactDimensionBuilder.is_transactional_source_table(source_table, profiles):
+            return False
+
         grain_columns = [
             profile
             for profile in profiles
@@ -595,6 +633,63 @@ class FactDimensionBuilder:
             return False
 
         return len(measure_columns) <= max(1, len(descriptive_columns))
+
+    @staticmethod
+    def has_lookup_attribute_columns(
+        profiles: Sequence[FunctionalColumnProfile],
+        key_column: str,
+    ) -> bool:
+        """
+        Return True when a source has a unique key plus dimension attributes.
+
+        In already-normalized lookup tables, attributes such as ProductName or
+        ProductPrice can be unique or numeric. They still describe the key; they
+        should not make the source look like a transaction fact.
+        """
+
+        return any(
+            FactDimensionBuilder.is_fallback_dimension_attribute(profile, key_column)
+            for profile in profiles
+        )
+
+    @staticmethod
+    def is_fallback_dimension_attribute(
+        profile: FunctionalColumnProfile,
+        key_column: str,
+    ) -> bool:
+        """
+        Detect an attribute for a complete fallback dimension.
+
+        This deliberately differs from is_descriptive_candidate: fallback
+        dimensions represent source tables that are already clean lookup tables,
+        so unique names and numeric properties are allowed as attributes.
+        """
+
+        if profile.column_name == key_column:
+            return False
+        if is_grain_like_column(profile.column_name):
+            return False
+        return True
+
+    @staticmethod
+    def select_complete_dimension_columns(
+        profiles: Sequence[FunctionalColumnProfile],
+        key_column: str,
+    ) -> tuple[str, ...]:
+        columns = []
+
+        for profile in profiles:
+            if profile.column_name == key_column:
+                columns.append(profile.column_name)
+                continue
+            if not FactDimensionBuilder.is_fallback_dimension_attribute(
+                profile,
+                key_column,
+            ):
+                continue
+            columns.append(profile.column_name)
+
+        return tuple(columns)
 
     def is_stable_dimension_dependent(
         self,

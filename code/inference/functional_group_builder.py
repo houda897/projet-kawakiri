@@ -683,7 +683,7 @@ class FunctionalGroupBuilder:
             if is_key_like_column(profile.column_name):
                 penalty += 0.25
             else:
-                penalty += 0.75
+                penalty += 1.2
 
         return penalty
 
