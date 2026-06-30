@@ -4,28 +4,16 @@ from config.scoring import SEMANTIC_HOMOGENEITY_WEIGHTS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import clear_metadata_table
-from core.naming import is_key_like_column as is_key_like_column_name
+from core.naming import (
+    is_key_like_column as is_key_like_column_name,
+)
+from core.naming import (
+    is_measure_like_column,
+)
 from core.schema import q_ident
 from inference.table_role import TableRoleCandidate
 
 logger = get_logger(__name__)
-
-MEASURE_KEYWORDS = {
-    "amount",
-    "price",
-    "cost",
-    "quantity",
-    "qty",
-    "total",
-    "margin",
-    "discount",
-    "tax",
-    "revenue",
-    "sales",
-    "profit",
-    "rate",
-    "score",
-}
 
 DESCRIPTIVE_KEYWORDS = {
     "name",
@@ -135,6 +123,8 @@ class SemanticHomogeneityValidator:
     def check_fact_homogeneity(self, table_name: str) -> dict:
         """Prove that a fact table doesn't contain dimension attributes"""
 
+        fact_fk_columns = self.load_fact_fk_columns(table_name)
+
         sql = f"""
         SELECT
             cs.column_name,
@@ -165,13 +155,16 @@ class SemanticHomogeneityValidator:
             col_name, col_type, entropy, cv, null_ratio, uniqueness_ratio = row
             col_lower = col_name.lower()
 
+            if col_name in fact_fk_columns:
+                continue
+
             if self.is_key_like_column(col_name):
                 continue
 
             if "Date" in col_type or "date" in col_lower:
                 continue
 
-            if any(kw in col_lower for kw in MEASURE_KEYWORDS):
+            if is_measure_like_column(col_name):
                 continue
 
             if "String" in col_type:
@@ -231,6 +224,24 @@ class SemanticHomogeneityValidator:
             "reason": reason_str,
         }
 
+    def load_fact_fk_columns(self, table_name: str) -> set[str]:
+        sql = f"""
+        SELECT source_columns
+        FROM {q_ident(META_DB)}.decision_model_edges
+        WHERE database_name = %(db)s
+          AND source_table = %(table)s
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"db": self.database_name, "table": table_name},
+        ).result_rows
+
+        columns = set()
+        for row in rows:
+            columns.update(self.split_columns(row[0]))
+        return columns
+
     def check_homogeneity(self, raw_roles: list[TableRoleCandidate]) -> list:
         reports = []
         for role in raw_roles:
@@ -243,6 +254,10 @@ class SemanticHomogeneityValidator:
             else:
                 logger.warning("Unsupported table role for semantic homogeneity: %s", role.role)
         return reports
+
+    @staticmethod
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(column.strip() for column in columns.split(",") if column.strip())
 
     def store_homogeneity(self, reports: list[dict]) -> None:
         """

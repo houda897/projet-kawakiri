@@ -128,6 +128,25 @@ def test_classify_transactional_table_as_fact_with_additive_measure() -> None:
     assert "transactional_grain" in reason
 
 
+def test_classify_quantitative_source_table_with_single_outgoing_link_as_fact() -> None:
+    role, confidence, reason = TableRoleEngine.classify_table(
+        row_count=2155,
+        outgoing_edges=1,
+        incoming_edges=0,
+        has_primary_key=True,
+        numeric_columns=5,
+        text_columns=0,
+        date_columns=0,
+        additive_measure_columns=1,
+        has_transactional_grain=True,
+        is_lookup_table=False,
+    )
+
+    assert role == "FACT"
+    assert confidence == 0.8
+    assert "quantitative_grain" in reason
+
+
 def test_classify_lookup_table_does_not_become_fact() -> None:
     role, confidence, reason = TableRoleEngine.classify_table(
         row_count=37,

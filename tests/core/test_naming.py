@@ -1,10 +1,33 @@
 from core.naming import (
+    is_grain_like_column,
     is_key_like_column,
+    is_measure_candidate,
+    is_measure_like_column,
     is_partition_like_table_pair,
+    is_temporal_like_column,
     normalize_column_name,
     normalize_key_concept,
     same_key_concept,
 )
+
+
+class ColumnProfile:
+    def __init__(
+        self,
+        column_name: str,
+        column_type: str,
+        distinct_count: int = 80,
+        uniqueness_ratio: float = 0.8,
+        entropy_ratio: float = 0.7,
+        variation_coefficient: float = 0.2,
+    ) -> None:
+        self.column_name = column_name
+        self.column_type = column_type
+        self.distinct_count = distinct_count
+        self.uniqueness_ratio = uniqueness_ratio
+        self.entropy_ratio = entropy_ratio
+        self.variation_coefficient = variation_coefficient
+        self.null_ratio = 0.0
 
 
 def test_is_key_like_column_detects_real_identifier_tokens() -> None:
@@ -22,6 +45,46 @@ def test_is_key_like_column_avoids_semantic_false_positives() -> None:
     assert not is_key_like_column("casino")
     assert not is_key_like_column("unicode")
     assert not is_key_like_column("preference")
+
+
+def test_is_measure_like_column_detects_measure_tokens() -> None:
+    assert is_measure_like_column("total_amount")
+    assert is_measure_like_column("UnitPrice")
+    assert is_measure_like_column("discount_pct")
+    assert is_measure_like_column("quantity")
+    assert not is_measure_like_column("customer_name")
+
+
+def test_measure_candidate_uses_numeric_shape_beyond_erp_names() -> None:
+    assert is_measure_candidate(ColumnProfile("temperature", "Float64"))
+    assert is_measure_candidate(ColumnProfile("salinity", "Float64"))
+    assert not is_measure_candidate(ColumnProfile("latitude", "Float64"))
+    assert not is_measure_candidate(ColumnProfile("station_id", "String"))
+
+
+def test_measure_candidate_name_is_only_a_weak_bonus() -> None:
+    assert not is_measure_candidate(
+        ColumnProfile(
+            "sales",
+            "Int64",
+            distinct_count=2,
+            uniqueness_ratio=0.0,
+            entropy_ratio=0.0,
+            variation_coefficient=0.0,
+        ),
+    )
+
+
+def test_is_grain_like_column_detects_line_level_tokens() -> None:
+    assert is_grain_like_column("order_line_item")
+    assert is_grain_like_column("line_number")
+    assert not is_grain_like_column("customer_name")
+
+
+def test_is_temporal_like_column_detects_calendar_tokens() -> None:
+    assert is_temporal_like_column("order_date")
+    assert is_temporal_like_column("fiscal_year")
+    assert not is_temporal_like_column("customer_name")
 
 
 def test_normalize_column_name_keeps_words_ending_like_keys() -> None:

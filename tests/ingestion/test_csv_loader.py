@@ -147,7 +147,7 @@ def test_infer_column_types_marks_nullable_columns(engine: CsvIngestionEngine) -
     assert inferred == [
         DetectedColumn(name="id", detected_type="Int64", nullable=False),
         DetectedColumn(name="amount", detected_type="Float64", nullable=False),
-        DetectedColumn(name="created_at", detected_type="String", nullable=False),
+        DetectedColumn(name="created_at", detected_type="DateTime64(0)", nullable=False),
         DetectedColumn(name="label", detected_type="Nullable(String)", nullable=True),
     ]
 
@@ -166,8 +166,33 @@ def test_infer_column_types_can_infer_temporal_columns(engine: CsvIngestionEngin
         )
 
         assert inferred == [
-            DetectedColumn(name="created_at", detected_type="DateTime", nullable=False),
+            DetectedColumn(name="created_at", detected_type="DateTime64(0)", nullable=False),
         ]
+    finally:
+        INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = previous_setting
+
+
+def test_datetime_before_unix_epoch_uses_datetime64(engine: CsvIngestionEngine) -> None:
+    previous_setting = INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"]
+    INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = True
+
+    try:
+        inferred = engine.infer_column_types(
+            ["birth_date"],
+            [
+                {"birth_date": "1962-02-18 00:00:00"},
+                {"birth_date": "1958-12-08 00:00:00"},
+            ],
+        )
+
+        assert inferred == [
+            DetectedColumn(name="birth_date", detected_type="DateTime64(0)", nullable=False),
+        ]
+        assert engine.cast_value(
+            "1962-02-18 00:00:00",
+            inferred[0],
+            2,
+        ) == datetime(1962, 2, 18, 0, 0, 0)
     finally:
         INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"] = previous_setting
 
@@ -225,7 +250,7 @@ def test_build_create_table_sql_quotes_identifiers(engine: CsvIngestionEngine) -
         ),
         (
             "2024-01-31 10:20:30",
-            DetectedColumn(name="moment", detected_type="DateTime", nullable=False),
+            DetectedColumn(name="moment", detected_type="DateTime64(0)", nullable=False),
             datetime(2024, 1, 31, 10, 20, 30),
         ),
         ("hello", DetectedColumn(name="label", detected_type="String", nullable=False), "hello"),

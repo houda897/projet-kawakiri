@@ -1,15 +1,18 @@
 import argparse
+from pathlib import Path
 
 from core.clickhouse_manager import get_manager
 from core.logger import get_logger
 from core.meta import clear_metadata_table, ensure_meta_schema
 from generation.sql_view_generator import SQLViewGenerator
 from inference.adjacency import AdjacencyMatrixEngine
+from inference.functional_group_builder import FunctionalGroupBuilder
 from inference.join_candidate import JoinEngine
 from inference.primary_key import PrimaryKeyEngine
 from inference.table_role import TableRoleEngine
 from ingestion.csv_loader import CsvIngestionEngine
 from modeling.candidate_builder import DecisionModelCandidateBuilder
+from modeling.logical_table_builder import LogicalTableBuilder
 from modeling.model_ranking import ModelRanking
 from profiling.basic_profile import ProfileEngine
 from reporting.certification_report import CertificationReportExporter
@@ -55,11 +58,19 @@ def run_folder_ingestion(path: str) -> None:
     logger.info("Lignes importées : %s", total_rows)
 
 
-def run_basic_profile() -> None:
+def run_basic_profile(
+    tables: list[str] | None = None,
+    clear_existing: bool = True,
+    clear_all_computed: bool = True,
+) -> None:
     db = get_manager()
     engine = ProfileEngine(db)
 
-    profiles = engine.profile_database()
+    profiles = engine.profile_database(
+        tables=tables,
+        clear_existing=clear_existing,
+        clear_all_computed=clear_all_computed,
+    )
 
     logger.info("Profilage terminé : %s colonnes profilées", len(profiles))
 
@@ -78,6 +89,44 @@ def run_pk_inference() -> None:
 
     candidates = engine.infer_candidates()
     engine.store_candidates(candidates)
+    engine.print_candidates(candidates)
+
+
+def run_functional_group_inference() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    engine = FunctionalGroupBuilder(db)
+
+    groups = engine.build_groups()
+    engine.store_groups(groups)
+    engine.print_groups(groups)
+
+
+def run_logical_table_building() -> list[str]:
+    db = get_manager()
+    ensure_meta_schema(db)
+    builder = LogicalTableBuilder(db)
+
+    logical_tables = builder.build_logical_tables()
+    builder.print_logical_tables(logical_tables)
+
+    return [table.logical_table_name for table in logical_tables]
+
+
+def run_logical_table_profile() -> None:
+    db = get_manager()
+    ensure_meta_schema(db)
+    logical_tables = [table.logical_table_name for table in LogicalTableBuilder(db).load_logical_tables()]
+
+    if not logical_tables:
+        logger.info("No logical tables found; keeping raw table profiles.")
+        return
+
+    run_basic_profile(
+        tables=logical_tables,
+        clear_existing=True,
+        clear_all_computed=False,
+    )
 
 
 def run_join(
@@ -228,7 +277,8 @@ def run_certification_report_export(path: str) -> None:
     db = get_manager()
     ensure_meta_schema(db)
     exporter = CertificationReportExporter(db)
-    exporter.write_json(path)
+    report = exporter.write_json(path)
+    exporter.write_mermaid_schema(Path(path).with_suffix(".mmd"), report)
     logger.info("Certification report exported: %s", path)
 
 
@@ -241,6 +291,10 @@ def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
         ("ingest-folder", lambda: run_folder_ingestion(path)),
         ("profile-basic", run_basic_profile),
         ("score-identifiability", run_identifiability),
+        ("infer-functional-groups", run_functional_group_inference),
+        ("build-logical-tables", run_logical_table_building),
+        ("profile-logical-tables", run_logical_table_profile),
+        ("score-logical-identifiability", run_identifiability),
         ("infer-pk", run_pk_inference),
         ("infer-joins", run_join_inference),
         ("build-adjacency", run_adjacency),
@@ -255,20 +309,24 @@ def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
     ]
 
     for step_name, step in steps:
-        logger.info("=== %s ===", step_name)
+        log_pipeline_step(step_name)
         step()
 
     if skip_sql_views:
-        logger.info("=== generate-sql-views skipped ===")
+        log_pipeline_step("generate-sql-views skipped")
     else:
-        logger.info("=== generate-sql-views ===")
+        log_pipeline_step("generate-sql-views")
         try:
             run_sql_view_generation()
         except ValueError as exc:
             logger.warning("SQL view generation skipped: %s", exc)
 
-    logger.info("=== export-certification-report ===")
+    log_pipeline_step("export-certification-report")
     run_certification_report_export(report_path)
+
+
+def log_pipeline_step(step_name: str) -> None:
+    logger.info("\n\n=== %s ===\n", step_name)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -301,6 +359,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compute identifiability scores from advanced column statistics",
     )
     identifiability_parser.set_defaults(handler=lambda args: run_identifiability())
+
+    functional_groups_parser = subparsers.add_parser(
+        "infer-functional-groups",
+        help="Infer logical column groups from functional dependencies",
+    )
+    functional_groups_parser.set_defaults(handler=lambda args: run_functional_group_inference())
+
+    logical_tables_parser = subparsers.add_parser(
+        "build-logical-tables",
+        help="Materialize logical dimension and fact candidates in ClickHouse",
+    )
+    logical_tables_parser.set_defaults(handler=lambda args: run_logical_table_building())
+
+    logical_profile_parser = subparsers.add_parser(
+        "profile-logical-tables",
+        help="Profile materialized logical tables and replace raw profiles",
+    )
+    logical_profile_parser.set_defaults(handler=lambda args: run_logical_table_profile())
 
     pk_parser = subparsers.add_parser(
         "infer-pk",

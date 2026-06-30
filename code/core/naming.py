@@ -1,9 +1,82 @@
 from __future__ import annotations
 
 import re
+from typing import Any
+
+from core.schema import is_continuous_numeric_type, is_numeric_type, is_temporal_type
 
 TECHNICAL_KEY_TOKENS = {"id", "fk", "pk", "key"}
 KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref"}
+MEASURE_NAME_TOKENS = {
+    "amount",
+    "cost",
+    "discount",
+    "freight",
+    "margin",
+    "pct",
+    "percent",
+    "percentage",
+    "price",
+    "profit",
+    "quantity",
+    "qty",
+    "rate",
+    "revenue",
+    "sales",
+    "score",
+    "tax",
+    "total",
+    "value",
+    "montant",
+    "prix",
+    "taxe",
+    "quantite",
+    "remise",
+}
+GRAIN_NAME_TOKENS = {
+    "line",
+    "ligne",
+    "row",
+    "sequence",
+    "seq",
+}
+TEMPORAL_NAME_TOKENS = {
+    "date",
+    "day",
+    "jour",
+    "month",
+    "mois",
+    "quarter",
+    "trimestre",
+    "week",
+    "semaine",
+    "year",
+    "annee",
+}
+LOCATION_NAME_TOKENS = {
+    "address",
+    "adresse",
+    "city",
+    "country",
+    "lat",
+    "latitude",
+    "lon",
+    "longitude",
+    "postal",
+    "postcode",
+    "region",
+    "state",
+    "ville",
+    "zip",
+}
+ENTITY_ATTRIBUTE_TOKENS = {
+    "customer": {"segment", "type"},
+    "client": {"segment", "type"},
+    "product": {"brand", "category", "categorie", "sub", "subcategory"},
+    "produit": {"brand", "category", "categorie", "sub", "subcategory"},
+    "order": {"date", "mode", "ship", "shipping", "status"},
+    "commande": {"date", "mode", "ship", "shipping", "status"},
+}
 SEPARATOR_REGEX = re.compile(r"[_\-\s]+")
 CAMELCASE_KEY_SUFFIX_REGEX = re.compile(r"(?<=[a-z0-9])(ID|Id|FK|Fk|PK|Pk|Key|No|Ref)$")
 CAMELCASE_BOUNDARY_REGEX = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -51,6 +124,59 @@ def is_key_like_column(column_name: str | None) -> bool:
     Detect technical identifier columns without corrupting words like valid or rapid.
     """
     return any(token in KEY_LIKE_TOKENS for token in split_column_name_tokens(column_name))
+
+
+def is_measure_like_column(column_name: str | None) -> bool:
+    """
+    Detect business measure names without duplicating measure vocabularies.
+    """
+    tokens = split_column_name_tokens(column_name)
+    if any(token in MEASURE_NAME_TOKENS for token in tokens):
+        return True
+
+    normalized = (column_name or "").lower()
+    return any(token in normalized for token in MEASURE_NAME_TOKENS)
+
+
+def is_grain_like_column(column_name: str | None) -> bool:
+    """
+    Detect row-grain or sequence columns that identify a fact level but are not measures.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in GRAIN_NAME_TOKENS for token in tokens)
+
+
+def is_temporal_like_column(column_name: str | None) -> bool:
+    """
+    Detect calendar/date semantic columns from their name.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in TEMPORAL_NAME_TOKENS for token in tokens)
+
+
+def is_location_like_column(column_name: str | None) -> bool:
+    """
+    Detect geographic/address attributes that naturally belong together.
+    """
+    tokens = split_column_name_tokens(column_name)
+    return any(token in LOCATION_NAME_TOKENS for token in tokens)
+
+
+def belongs_to_key_concept(key_column: str | None, attribute_column: str | None) -> bool:
+    """
+    Return True when an attribute naturally describes the entity named by a key.
+    """
+    key_tokens = set(normalize_key_concept_tokens(key_column))
+    attribute_tokens = set(split_column_name_tokens(attribute_column))
+
+    if key_tokens and attribute_tokens & key_tokens:
+        return True
+
+    for key_token in key_tokens:
+        if attribute_tokens & ENTITY_ATTRIBUTE_TOKENS.get(key_token, set()):
+            return True
+
+    return is_location_like_column(key_column) and is_location_like_column(attribute_column)
 
 
 def normalize_key_concept(column_name: str | None) -> str:
@@ -118,3 +244,157 @@ def is_partition_like_table_pair(left_table: str | None, right_table: str | None
         return False
 
     return left_tokens != left_without_year and right_tokens != right_without_year
+
+
+def is_measure_candidate(profile: Any) -> bool:
+    """
+    Detect likely measures from statistical shape first, with names as weak hints.
+    """
+    return measure_candidate_score(profile) >= 0.4
+
+
+def measure_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column behaves like an observable measure.
+
+    Names are only a weak bonus: numeric shape, dispersion and information
+    spread carry the decision.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+    entropy_ratio = float(_profile_attr(profile, "entropy_ratio", 0.0) or 0.0)
+    variation_coefficient = float(
+        _profile_attr(profile, "variation_coefficient", 0.0) or 0.0,
+    )
+
+    if distinct_count <= 1:
+        return 0.0
+    if not is_numeric_type(column_type):
+        return 0.0
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        return 0.0
+    if is_location_like_column(column_name):
+        return 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        return 0.0
+
+    score = 0.2
+    if is_continuous_numeric_type(column_type):
+        score += 0.2
+    score += min(max(uniqueness_ratio, 0.0), 1.0) * 0.4
+    score += min(max(entropy_ratio, 0.0), 1.0) * 0.25
+    score += min(max(variation_coefficient, 0.0), 1.0) * 0.3
+    if distinct_count >= 3:
+        score += 0.1
+    if is_measure_like_column(column_name):
+        score += 0.1
+
+    return min(score, 1.0)
+
+
+def is_grain_candidate(profile: Any) -> bool:
+    """
+    Detect columns that can help define the observation grain of a fact table.
+    """
+    return grain_candidate_score(profile) >= 0.5
+
+
+def grain_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column can participate in the observation grain.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    null_ratio = float(_profile_attr(profile, "null_ratio", 0.0) or 0.0)
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+
+    if null_ratio > 0.2 or distinct_count <= 1:
+        return 0.0
+    if is_measure_candidate(profile):
+        return 0.0
+
+    score = 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        score += 0.6
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        score += 0.55
+    if uniqueness_ratio >= 0.95:
+        score += 0.55
+
+    return min(score, 1.0)
+
+
+def is_descriptive_candidate(profile: Any) -> bool:
+    """
+    Detect attributes that can describe a dimension after FD validation.
+    """
+    return descriptive_candidate_score(profile) >= 0.35
+
+
+def descriptive_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column behaves like a descriptive dimension attribute.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+
+    if distinct_count <= 1 and not is_location_like_column(column_name):
+        return 0.0
+    if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        return 0.0
+    if is_measure_candidate(profile):
+        return 0.0
+    if uniqueness_ratio >= 0.95:
+        return 0.0
+
+    score = 0.35
+    score += max(0.0, 1.0 - uniqueness_ratio) * 0.25
+    if is_location_like_column(column_name):
+        score += 0.15
+
+    return min(score, 1.0)
+
+
+def is_lookup_key_candidate(profile: Any) -> bool:
+    """
+    Detect columns that can carry a dimension key in raw or logical tables.
+    """
+    return lookup_key_candidate_score(profile) >= 0.5
+
+
+def lookup_key_candidate_score(profile: Any) -> float:
+    """
+    Score how much a column can carry a dimension lookup key.
+    """
+    column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
+    null_ratio = float(_profile_attr(profile, "null_ratio", 0.0) or 0.0)
+    distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
+    uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
+    identifiability_score = float(
+        _profile_attr(profile, "identifiability_score", 0.0) or 0.0,
+    )
+
+    if null_ratio > 0.05 or distinct_count <= 1:
+        return 0.0
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
+        return 0.0
+    if is_measure_candidate(profile) or is_grain_like_column(column_name):
+        return 0.0
+
+    score = 0.0
+    if is_key_like_column(column_name):
+        score += 0.55
+    if 0.01 <= uniqueness_ratio < 0.95:
+        score += 0.25
+    score += min(max(identifiability_score, 0.0), 1.0) * 0.25
+
+    return min(score, 1.0)
+
+
+def _profile_attr(profile: Any, name: str, default: Any) -> Any:
+    return getattr(profile, name, default)
