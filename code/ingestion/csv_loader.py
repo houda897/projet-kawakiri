@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import csv
 from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
@@ -60,6 +61,7 @@ class CsvIngestionEngine:
 
     def __init__(self, db: ClickHouseManager):
         self.db = db
+        self._encoding_cache: dict[tuple[str, int, int], str] = {}
 
     def import_csv_to_clickhouse(
         self,
@@ -179,12 +181,64 @@ class CsvIngestionEngine:
         return results
 
     def detect_delimiter(self, path: Path) -> str:
-        sample = path.read_text(encoding="utf-8-sig", errors="ignore")[:8192]
+        encoding = self.detect_encoding(path)
+        with path.open("r", encoding=encoding, newline="") as file:
+            sample = file.read(8192)
 
         try:
             return csv.Sniffer().sniff(sample, delimiters="".join(DELIMITERS)).delimiter
         except csv.Error:
             return self.guess_delimiter_from_rows(sample)
+
+    def detect_encoding(self, path: Path) -> str:
+        """Detect common CSV encodings without silently dropping invalid bytes."""
+        stat = path.stat()
+        cache_key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+        cached_encoding = self._encoding_cache.get(cache_key)
+
+        if cached_encoding is not None:
+            return cached_encoding
+
+        with path.open("rb") as file:
+            prefix = file.read(4)
+
+        bom_encodings = (
+            (codecs.BOM_UTF32_LE, "utf-32"),
+            (codecs.BOM_UTF32_BE, "utf-32"),
+            (codecs.BOM_UTF8, "utf-8-sig"),
+            (codecs.BOM_UTF16_LE, "utf-16"),
+            (codecs.BOM_UTF16_BE, "utf-16"),
+        )
+        encoding = next(
+            (name for bom, name in bom_encodings if prefix.startswith(bom)),
+            None,
+        )
+
+        if encoding is None:
+            if self.can_decode(path, "utf-8"):
+                encoding = "utf-8-sig"
+            elif self.can_decode(path, "cp1252"):
+                encoding = "cp1252"
+            else:
+                encoding = "latin-1"
+
+        self._encoding_cache.clear()
+        self._encoding_cache[cache_key] = encoding
+        return encoding
+
+    @staticmethod
+    def can_decode(path: Path, encoding: str) -> bool:
+        decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+
+        try:
+            with path.open("rb") as file:
+                while chunk := file.read(64 * 1024):
+                    decoder.decode(chunk, final=False)
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            return False
+
+        return True
 
     def read_csv_sample(
         self,
@@ -400,7 +454,7 @@ ORDER BY tuple()
         delimiter: str,
         column_names: list[str],
     ) -> Iterator[tuple[int, dict[str, str | None]]]:
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
+        with path.open("r", encoding=self.detect_encoding(path), newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
             original_headers = list(reader.fieldnames or [])
 
@@ -430,9 +484,8 @@ ORDER BY tuple()
             if not self.is_dirty_row(row_data):
                 yield line_number, row_data
 
-    @staticmethod
-    def read_original_headers(path: Path, delimiter: str) -> list[str]:
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
+    def read_original_headers(self, path: Path, delimiter: str) -> list[str]:
+        with path.open("r", encoding=self.detect_encoding(path), newline="") as file:
             reader = csv.DictReader(file, delimiter=delimiter)
             headers = list(reader.fieldnames or [])
 
