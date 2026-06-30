@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
+from core.logger import get_logger
 from core.schema import q_ident
+
+logger = get_logger(__name__)
 
 EXPECTED_RULES = (
     "PARSIMONY_RANKING",
@@ -37,6 +41,7 @@ class CertificationReportExporter:
             for certification in certifications
         ]
         best_model = self.select_best_model(models)
+        coverage = self.build_coverage(best_model)
 
         return {
             "database_name": CH_DB,
@@ -44,6 +49,7 @@ class CertificationReportExporter:
             "best_model": best_model,
             "models": models,
             "excluded_tables": excluded_tables,
+            "coverage": coverage,
         }
 
     def build_model_report(
@@ -179,6 +185,215 @@ class CertificationReportExporter:
             for row in rows
         ]
 
+    def build_coverage(self, best_model: dict) -> dict:
+        """
+        Explain what is shown in the certified model and what remains outside it.
+        """
+        certified_tables = set(best_model["fact_tables"] + best_model["dimension_tables"])
+        logical_tables = self.load_logical_tables()
+        logical_tables_outside_model = [
+            table
+            for table in logical_tables
+            if table["logical_table_name"] not in certified_tables
+        ]
+
+        covered_columns = self.load_covered_source_columns()
+        uncovered_columns = [
+            column
+            for column in self.load_source_columns()
+            if (column["source_table"], column["column_name"]) not in covered_columns
+        ]
+
+        return {
+            "certified_model_tables": sorted(certified_tables),
+            "logical_tables": logical_tables,
+            "logical_tables_outside_model": logical_tables_outside_model,
+            "uncovered_columns": uncovered_columns,
+        }
+
+    def load_logical_tables(self) -> list[dict]:
+        sql = f"""
+        SELECT
+            logical_table_name,
+            source_table,
+            group_name,
+            determinant_columns,
+            logical_table_role
+        FROM {q_ident(META_DB)}.logical_tables
+        WHERE database_name = %(database)s
+        ORDER BY logical_table_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return [
+            {
+                "logical_table_name": row[0],
+                "source_table": row[1],
+                "group_name": row[2],
+                "determinant_columns": self.split_columns(row[3]),
+                "logical_table_role": row[4],
+            }
+            for row in rows
+        ]
+
+    def load_covered_source_columns(self) -> set[tuple[str, str]]:
+        sql = f"""
+        SELECT DISTINCT
+            source_table,
+            column_name
+        FROM {q_ident(META_DB)}.logical_table_columns
+        WHERE database_name = %(database)s
+        ORDER BY source_table, column_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return {(row[0], row[1]) for row in rows}
+
+    def load_source_columns(self) -> list[dict]:
+        sql = f"""
+        SELECT
+            table_name,
+            column_name,
+            column_type
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+          AND NOT startsWith(table_name, 'logical_')
+          AND NOT startsWith(column_name, '__')
+        ORDER BY table_name, column_name
+        """
+
+        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        return [
+            {
+                "source_table": row[0],
+                "column_name": row[1],
+                "column_type": row[2],
+            }
+            for row in rows
+        ]
+
+    def load_model_edges(self, model_id: str) -> list[dict]:
+        """
+        Return the joins that compose a stored decision model.
+        """
+        sql = f"""
+        SELECT
+            source_table,
+            target_table,
+            source_columns,
+            target_columns,
+            join_success_ratio,
+            depth
+        FROM {q_ident(META_DB)}.decision_model_edges
+        WHERE database_name = %(database)s
+          AND model_id = %(model_id)s
+        ORDER BY depth, source_table, target_table
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "model_id": model_id},
+        ).result_rows
+
+        return [
+            {
+                "source_table": row[0],
+                "target_table": row[1],
+                "source_columns": row[2],
+                "target_columns": row[3],
+                "join_success_ratio": float(row[4]),
+                "depth": int(row[5]),
+            }
+            for row in rows
+        ]
+
+    def load_model_columns(self, table_names: list[str]) -> dict[str, list[dict]]:
+        """
+        Return profiled columns for the tables shown in the diagram.
+        """
+        if not table_names:
+            return {}
+
+        sql = f"""
+        SELECT
+            table_name,
+            column_name,
+            column_type
+        FROM {q_ident(META_DB)}.column_profiles
+        WHERE database_name = %(database)s
+          AND table_name IN %(table_names)s
+          AND NOT startsWith(column_name, '__')
+        ORDER BY table_name, column_name
+        """
+
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "table_names": tuple(table_names)},
+        ).result_rows
+        columns_by_table: dict[str, list[dict]] = {table_name: [] for table_name in table_names}
+
+        for row in rows:
+            columns_by_table.setdefault(row[0], []).append(
+                {
+                    "column_name": row[1],
+                    "column_type": row[2],
+                }
+            )
+
+        return columns_by_table
+
+    def build_best_model_schema(self, report: dict | None = None) -> str:
+        """
+        Build a readable schema for the selected model in the certification report.
+        """
+        if report is None:
+            report = self.build_report()
+
+        best_model = report["best_model"]
+        edges = self.load_model_edges(best_model["model_id"])
+        coverage = report.get("coverage", {})
+        outside_table_names = [
+            table["logical_table_name"]
+            for table in coverage.get("logical_tables_outside_model", [])
+        ]
+        table_names = (
+            best_model["fact_tables"]
+            + best_model["dimension_tables"]
+            + outside_table_names
+            + [table["table_name"] for table in report.get("excluded_tables", [])]
+        )
+        columns_by_table = self.load_model_columns(table_names)
+        return self.format_model_schema(
+            model=best_model,
+            edges=edges,
+            excluded_tables=report.get("excluded_tables", []),
+            columns_by_table=columns_by_table,
+            coverage=coverage,
+        )
+
+    def print_best_model_schema(self, report: dict | None = None) -> str:
+        """
+        Print the selected model as a Mermaid diagram and return that text.
+        """
+        schema = self.build_best_model_schema(report)
+        logger.info("=== inferred model schema (Mermaid) ===\n%s", schema)
+        return schema
+
+    def write_mermaid_schema(
+        self,
+        path: str | Path,
+        report: dict | None = None,
+    ) -> str:
+        """
+        Write the selected model schema as a Mermaid file and return its content.
+        """
+        schema = self.build_best_model_schema(report)
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(schema, encoding="utf-8")
+        logger.info("Mermaid model schema exported: %s", output_path)
+        return schema
+
     def write_json(self, path: str | Path) -> dict:
         report = self.build_report()
         output_path = Path(path)
@@ -196,3 +411,216 @@ class CertificationReportExporter:
     @staticmethod
     def split_columns(columns: str) -> list[str]:
         return [column.strip() for column in columns.split(",") if column.strip()]
+
+    @staticmethod
+    def format_model_schema(
+        model: dict,
+        edges: list[dict],
+        excluded_tables: list[dict],
+        columns_by_table: dict[str, list[dict]] | None = None,
+        coverage: dict | None = None,
+    ) -> str:
+        columns_by_table = columns_by_table or {}
+        coverage = coverage or {}
+
+        lines = [
+            "erDiagram",
+            f"  %% Model: {model['model_id']}",
+            f"  %% Type: {model['model_type']}",
+            f"  %% Status: {model['status']} | score={model['certification_score']}",
+        ]
+
+        fact_tables = model.get("fact_tables", [])
+        dimension_tables = model.get("dimension_tables", [])
+        outside_logical_tables = coverage.get("logical_tables_outside_model", [])
+        table_aliases = CertificationReportExporter.build_mermaid_table_aliases(
+            fact_tables,
+            dimension_tables,
+            excluded_tables,
+            outside_logical_tables,
+        )
+        table_roles = {
+            **{table: "FACT" for table in fact_tables},
+            **{table: "DIMENSION" for table in dimension_tables},
+            **{table["table_name"]: table["role"] for table in excluded_tables},
+            **{
+                table["logical_table_name"]: table["logical_table_role"]
+                for table in outside_logical_tables
+            },
+        }
+
+        lines.append("  %% Certified model tables")
+        for table in fact_tables + dimension_tables:
+            lines.extend(
+                CertificationReportExporter.format_er_table(
+                    table,
+                    table_aliases[table],
+                    table_roles[table],
+                    columns_by_table.get(table, []),
+                    edges,
+                )
+            )
+
+        if outside_logical_tables:
+            lines.append("  %% Other logical tables outside certified model")
+            for logical_table in outside_logical_tables:
+                table_name = logical_table["logical_table_name"]
+                lines.extend(
+                    CertificationReportExporter.format_er_table(
+                        table_name,
+                        table_aliases[table_name],
+                        table_roles[table_name],
+                        columns_by_table.get(table_name, []),
+                        edges,
+                    )
+                )
+
+        if excluded_tables:
+            lines.append("  %% Excluded isolated tables")
+            for table in excluded_tables:
+                table_name = table["table_name"]
+                lines.extend(
+                    CertificationReportExporter.format_er_table(
+                        table_name,
+                        table_aliases[table_name],
+                        table_roles[table_name],
+                        columns_by_table.get(table_name, []),
+                        edges,
+                    )
+                )
+
+        for edge in edges:
+            lines.append(CertificationReportExporter.format_er_relation(edge, table_aliases))
+
+        uncovered_columns = coverage.get("uncovered_columns", [])
+        if uncovered_columns:
+            lines.append("  %% Uncovered source columns")
+            for column in uncovered_columns:
+                lines.append(
+                    "  %% "
+                    f"{column['source_table']}.{column['column_name']} "
+                    f"({column['column_type']})"
+                )
+
+        issues = model.get("issues", [])
+        if issues:
+            lines.append("  %% Certification issues")
+            for issue in issues:
+                table_name = issue.get("table_name") or "model"
+                lines.append(
+                    f"  %% {issue['rule_name']} [{issue['severity']}] "
+                    f"{table_name}: {issue['message']}"
+                )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def mermaid_node_id(table_name: str) -> str:
+        node_id = re.sub(r"\W+", "_", table_name).strip("_")
+        if not node_id or node_id[0].isdigit():
+            node_id = f"table_{node_id}"
+        return node_id
+
+    @staticmethod
+    def format_er_table(
+        table_name: str,
+        table_alias: str,
+        table_role: str,
+        columns: list[dict],
+        edges: list[dict],
+    ) -> list[str]:
+        lines = [f"  {table_alias} {{"]
+
+        if not columns:
+            lines.append(f"    string {table_role}")
+        else:
+            for column in columns:
+                column_name = column["column_name"]
+                markers = CertificationReportExporter.column_markers(
+                    table_name,
+                    column_name,
+                    edges,
+                )
+                marker_text = f" {markers}" if markers else ""
+                lines.append(
+                    "    "
+                    f"{CertificationReportExporter.mermaid_type(column['column_type'])} "
+                    f"{CertificationReportExporter.mermaid_column_name(column_name)}"
+                    f"{marker_text}"
+                )
+
+        lines.append("  }")
+        lines.append(f"  %% {table_alias}: {table_role} source={table_name}")
+        return lines
+
+    @staticmethod
+    def format_er_relation(edge: dict, table_aliases: dict[str, str]) -> str:
+        parent = table_aliases.get(
+            edge["target_table"],
+            CertificationReportExporter.mermaid_node_id(edge["target_table"]),
+        )
+        child = table_aliases.get(
+            edge["source_table"],
+            CertificationReportExporter.mermaid_node_id(edge["source_table"]),
+        )
+        source_columns = str(edge["source_columns"]).replace('"', "'")
+        target_columns = str(edge["target_columns"]).replace('"', "'")
+        ratio = f"{edge['join_success_ratio']:.4g}"
+        label = f"{source_columns} = {target_columns}; ratio={ratio}"
+        return f"  {parent} ||--o{{ {child} : \"{label}\""
+
+    @staticmethod
+    def build_mermaid_table_aliases(
+        fact_tables: list[str],
+        dimension_tables: list[str],
+        excluded_tables: list[dict],
+        outside_logical_tables: list[dict] | None = None,
+    ) -> dict[str, str]:
+        outside_logical_tables = outside_logical_tables or []
+        aliases = {}
+
+        for index, table_name in enumerate(fact_tables, start=1):
+            aliases[table_name] = (
+                "FACT_TABLE" if len(fact_tables) == 1 else f"FACT_TABLE_{index}"
+            )
+
+        for index, table_name in enumerate(dimension_tables, start=1):
+            aliases[table_name] = f"DIMENSION_TABLE_{index}"
+
+        for index, table in enumerate(excluded_tables, start=1):
+            aliases[table["table_name"]] = f"EXCLUDED_TABLE_{index}"
+
+        for index, table in enumerate(outside_logical_tables, start=1):
+            aliases[table["logical_table_name"]] = f"OTHER_LOGICAL_TABLE_{index}"
+
+        return aliases
+
+    @staticmethod
+    def column_markers(
+        table_name: str,
+        column_name: str,
+        edges: list[dict],
+    ) -> str:
+        markers = []
+        for edge in edges:
+            if table_name == edge["target_table"] and column_name in CertificationReportExporter.split_columns(
+                str(edge["target_columns"])
+            ):
+                markers.append("PK")
+            if table_name == edge["source_table"] and column_name in CertificationReportExporter.split_columns(
+                str(edge["source_columns"])
+            ):
+                markers.append("FK")
+        return ",".join(dict.fromkeys(markers))
+
+    @staticmethod
+    def mermaid_type(column_type: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z_]+", "_", column_type).strip("_")
+        return normalized or "string"
+
+    @staticmethod
+    def mermaid_column_name(column_name: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z_]+", "_", column_name).strip("_")
+        if not normalized or normalized[0].isdigit():
+            normalized = f"column_{normalized}"
+        return normalized

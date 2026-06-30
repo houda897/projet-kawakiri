@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from core.clickhouse_manager import CH_DB, META_DB
 from core.logger import get_logger
-from core.meta import clear_computed_metadata, ensure_meta_schema
+from core.meta import clear_computed_metadata, clear_metadata_table, ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
 from stats.stats_computing import compute_column_stats
 
@@ -134,18 +134,30 @@ class ProfileEngine:
             ],
         )
 
-    def profile_database(self) -> list[ColumnProfile]:
+    def profile_database(
+        self,
+        tables: list[str] | None = None,
+        clear_existing: bool = True,
+        clear_all_computed: bool = True,
+    ) -> list[ColumnProfile]:
         """
-        Profile all regular columns in the configured ClickHouse database.
+        Profile regular columns in the configured ClickHouse database.
         """
 
         ensure_meta_schema(self.db)
-        clear_computed_metadata(self.db)
+
+        if clear_existing and clear_all_computed:
+            clear_computed_metadata(self.db)
+        elif clear_existing:
+            clear_metadata_table(self.db, "column_profiles")
+            clear_metadata_table(self.db, "column_stats")
+            clear_metadata_table(self.db, "identifiability_scores")
 
         profiles = []
         run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tables_to_profile = tables if tables is not None else list_tables(self.db)
 
-        for table in list_tables(self.db):
+        for table in tables_to_profile:
             for col in list_columns(self.db, table):
                 if col.name.startswith("__"):
                     continue

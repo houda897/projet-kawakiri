@@ -1,4 +1,5 @@
 from inference.primary_key import PrimaryKeyCandidate, PrimaryKeyEngine
+from inference.key_ranking import RankedKeyCandidate
 
 
 class FakeQueryResult:
@@ -88,3 +89,45 @@ def test_load_candidates_reads_stored_primary_keys() -> None:
     assert candidates[0].column_name == "customer_id"
     assert "primary_key_candidates" in db.last_sql
     assert db.last_parameters["database"]
+
+
+def test_logical_table_key_overrides_accidental_simple_key() -> None:
+    simple_candidate = RankedKeyCandidate(
+        database_name="lab_db",
+        table_name="logical_shipping",
+        column_names=("postal_code",),
+        column_types=("String",),
+        rows=1000,
+        null_ratio=0.0,
+        uniqueness_ratio=0.998,
+        identifiability_score=0.95,
+        key_like_column_count=1,
+        numeric_column_count=0,
+        measure_like_column_count=0,
+        low_cardinality_column_count=0,
+        confidence=0.98,
+        rank_reason="simple_nearly_unique",
+    )
+    logical_candidate = RankedKeyCandidate(
+        database_name="lab_db",
+        table_name="logical_shipping",
+        column_names=("postal_code", "city"),
+        column_types=("String", "String"),
+        rows=1000,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.96,
+        key_like_column_count=1,
+        numeric_column_count=0,
+        measure_like_column_count=0,
+        low_cardinality_column_count=0,
+        confidence=0.99,
+        rank_reason="logical_dimension_determinant",
+    )
+
+    best_by_table = PrimaryKeyEngine.apply_logical_table_key_overrides(
+        {"logical_shipping": simple_candidate},
+        [logical_candidate],
+    )
+
+    assert best_by_table["logical_shipping"].column_names == ("postal_code", "city")

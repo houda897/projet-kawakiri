@@ -35,7 +35,9 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
             ("total_amount", "Float64", 0.8, 1.2, 0.0, 0.8),
             ("good_measure", "Int32", 0.8, 0.9, 0.0, 0.1),
         ]
-        self.mock_db.query.return_value = mock_result
+        fk_result = MagicMock()
+        fk_result.result_rows = []
+        self.mock_db.query.side_effect = [fk_result, mock_result]
         self.validator.threshold = 0.85
 
         report = self.validator.check_fact_homogeneity("fact_sales")
@@ -51,7 +53,9 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
             ("customer_name", "String", 0.5, 0.0, 0.0, 0.1),
             ("bad_flag", "Int32", 0.0, 0.0, 0.0, 0.0),
         ]
-        self.mock_db.query.return_value = mock_result
+        fk_result = MagicMock()
+        fk_result.result_rows = []
+        self.mock_db.query.side_effect = [fk_result, mock_result]
         self.validator.threshold = 0.5
 
         report = self.validator.check_fact_homogeneity("fact_bad")
@@ -60,6 +64,21 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         self.assertEqual(report["issue_count"], 2)
         self.assertTrue("customer_name" in report["descriptive_like_columns"])
         self.assertTrue("bad_flag" in report["descriptive_like_columns"])
+
+    def test_check_fact_homogeneity_allows_string_foreign_key(self):
+        fk_result = MagicMock()
+        fk_result.result_rows = [("Product_ID,Product_Name",)]
+        stats_result = MagicMock()
+        stats_result.result_rows = [
+            ("Product_Name", "String", 0.5, 0.0, 0.0, 0.1),
+            ("Sales", "Float64", 0.8, 1.2, 0.0, 0.8),
+        ]
+        self.mock_db.query.side_effect = [fk_result, stats_result]
+
+        report = self.validator.check_fact_homogeneity("fact_sales")
+
+        self.assertTrue(report["is_valid"])
+        self.assertEqual(report["issue_count"], 0)
 
     def test_dimension_query_filters_latest_stats_by_table(self):
         mock_result = MagicMock()
@@ -74,11 +93,11 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
     def test_fact_query_filters_latest_stats_by_table(self):
         mock_result = MagicMock()
         mock_result.result_rows = []
-        self.mock_db.query.return_value = mock_result
+        self.mock_db.query.side_effect = [mock_result, mock_result]
 
         self.validator.check_fact_homogeneity("fact_sales")
 
-        sql = self.mock_db.query.call_args[0][0]
+        sql = self.mock_db.query.call_args_list[1][0][0]
         assert "AND table_name = %(table)s" in sql
 
     def test_check_homogeneity_skips_roles_outside_model_scope(self):

@@ -236,7 +236,7 @@ class CsvIngestionEngine:
 
         if INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"]:
             if all(self.is_datetime(value) for value in values):
-                return "DateTime"
+                return "DateTime64(0)"
 
             if all(self.is_date(value) for value in values):
                 return "Date32"
@@ -737,7 +737,7 @@ ORDER BY tuple()
             if base_type in ("Date", "Date32"):
                 return self.parse_date(value)
 
-            if base_type == "DateTime":
+            if base_type.startswith("DateTime"):
                 return self.parse_datetime(value)
 
             return value
