@@ -72,3 +72,25 @@ def test_compute_column_stats_string_column_uses_zero_numeric_metrics() -> None:
     assert "0.0 AS avg_value" in sql
     assert "0.0 AS std_value" in sql
     assert "0.0 AS skew_value" in sql
+
+
+def test_compute_column_stats_handles_columns_without_non_null_values() -> None:
+    db = MagicMock()
+    col = Col(name="empty_value", ch_type="Nullable(String)")
+
+    compute_column_stats(
+        db=db,
+        run_ts="2024-01-01 00:00:00",
+        database="lab_db",
+        table="products",
+        col=col,
+    )
+
+    sql = db.command.call_args[0][0]
+
+    assert "WHERE base.non_null_rows > 0" in sql
+    assert "entropy_stats AS" in sql
+    assert "FROM base\n    CROSS JOIN entropy_stats" in sql
+    assert "entropy_stats.raw_entropy" in sql
+    assert "FROM probs" in sql
+    assert "(SELECT non_null_rows FROM base)" not in sql

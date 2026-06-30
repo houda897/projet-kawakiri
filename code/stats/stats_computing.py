@@ -79,9 +79,16 @@ def compute_column_stats(
         ),
         probs AS (
             SELECT
-                frequency,
-                frequency / toFloat64((SELECT non_null_rows FROM base)) AS probability
+                frequency / toFloat64(base.non_null_rows) AS probability
             FROM freqs
+            CROSS JOIN base
+            WHERE base.non_null_rows > 0
+        ),
+        entropy_stats AS (
+            SELECT
+                toUInt64(count()) AS distinct_count,
+                -sum(probability * log2(probability)) AS raw_entropy
+            FROM probs
         )
     SELECT
         toDateTime(%(run_ts)s) AS run_ts,
@@ -89,18 +96,23 @@ def compute_column_stats(
         %(table)s AS table_name,
         %(column)s AS column_name,
         %(column_type)s AS column_type,
-        (SELECT total_rows FROM base) AS rows,
-        (SELECT non_null_rows FROM base) AS non_null_rows,
-        toUInt64(count()) AS distinct_count,
+        base.total_rows AS rows,
+        base.non_null_rows AS non_null_rows,
+        entropy_stats.distinct_count AS distinct_count,
         if(
-            (SELECT non_null_rows FROM base) > 1,
-            -sum(probability * log2(probability)) / log2((SELECT non_null_rows FROM base)),
+            base.non_null_rows > 1,
+            entropy_stats.raw_entropy / log2(toFloat64(base.non_null_rows)),
             0.0
         ) AS entropy_ratio,
-        (SELECT if(total_rows > 0, 1 - (non_null_rows / total_rows), 0.0) FROM base) AS sparsity,
-        (SELECT {variation_expr} FROM base) AS variation_coefficient,
-        (SELECT {skewness_expr} FROM base) AS skewness_score
-    FROM probs
+        if(
+            base.total_rows > 0,
+            1.0 - base.non_null_rows / toFloat64(base.total_rows),
+            0.0
+        ) AS sparsity,
+        {variation_expr} AS variation_coefficient,
+        {skewness_expr} AS skewness_score
+    FROM base
+    CROSS JOIN entropy_stats
     """
 
     db.command(

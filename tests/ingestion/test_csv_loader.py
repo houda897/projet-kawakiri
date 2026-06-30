@@ -29,6 +29,49 @@ def test_detect_delimiter_uses_sniffer(engine: CsvIngestionEngine, tmp_path: Pat
     assert engine.detect_delimiter(path) == ";"
 
 
+def test_detect_encoding_recognizes_utf8_bom(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "utf8_bom.csv"
+    path.write_text("id;name\n1;Élodie\n", encoding="utf-8-sig")
+
+    assert engine.detect_encoding(path) == "utf-8-sig"
+    headers, rows = engine.read_csv_sample(path, ";", sample_size=None)
+    assert headers == ["id", "name"]
+    assert rows == [{"id": "1", "name": "Élodie"}]
+
+
+def test_windows_1252_csv_is_detected_and_read_without_data_loss(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "windows_export.csv"
+    path.write_bytes("id;libellé\n1;Café – été\n".encode("cp1252"))
+
+    assert engine.detect_encoding(path) == "cp1252"
+    assert engine.detect_delimiter(path) == ";"
+
+    headers, rows = engine.read_csv_sample(path, ";", sample_size=None)
+    assert headers == ["id", "libellé"]
+    assert rows == [{"id": "1", "libellé": "Café – été"}]
+
+
+def test_utf16_csv_with_bom_is_detected_and_read(
+    engine: CsvIngestionEngine,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "utf16_export.csv"
+    path.write_text("id;name\n1;André\n", encoding="utf-16")
+
+    assert engine.detect_encoding(path) == "utf-16"
+    assert engine.detect_delimiter(path) == ";"
+
+    headers, rows = engine.read_csv_sample(path, ";", sample_size=None)
+    assert headers == ["id", "name"]
+    assert rows == [{"id": "1", "name": "André"}]
+
+
 def test_detect_delimiter_fallback_prefers_stable_columns(
     engine: CsvIngestionEngine,
     tmp_path: Path,
