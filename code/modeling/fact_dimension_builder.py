@@ -398,10 +398,7 @@ class FactDimensionBuilder:
         if (
             (
                 source_structure is None
-                or (
-                    source_structure.incoming_count == 0
-                    and source_structure.outgoing_count == 0
-                )
+                or (source_structure.incoming_count == 0 and source_structure.outgoing_count == 0)
             )
             and len(grain_columns) == 1
             and grain_columns[0].uniqueness_ratio >= 0.95

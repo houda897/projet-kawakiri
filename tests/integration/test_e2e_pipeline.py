@@ -20,15 +20,10 @@ class TestE2EPipelineRealData(unittest.TestCase):
         actual_db = os.environ.get("CH_DATABASE", "")
 
         if actual_db != self.REQUIRED_CH_DATABASE:
-
             self.skipTest(
-
                 f"Integration test skipped: CH_DATABASE must be '{self.REQUIRED_CH_DATABASE}' "
-
                 f"in your .env file. Current value: '{actual_db or '(not set)'}'.\n"
-
                 f"Set CH_DATABASE={self.REQUIRED_CH_DATABASE} and re-run."
-
             )
 
         # Get the directory where this test file is located
@@ -66,14 +61,20 @@ class TestE2EPipelineRealData(unittest.TestCase):
             self.fail(f"The E2E pipeline crashed unexpectedly with error: {e}")
 
         # 2. Verify that the output certification report was generated
-        self.assertTrue(os.path.exists(self.report_path), "The certification report JSON was not generated.")
+        self.assertTrue(
+            os.path.exists(self.report_path), "The certification report JSON was not generated."
+        )
 
         with open(self.report_path, encoding="utf-8") as f:
             report_data = json.load(f)
 
         # 3. High-level structural validations on the JSON schema
         self.assertIn("models", report_data, "The 'models' key is missing from the JSON report.")
-        self.assertGreater(len(report_data["models"]), 0, "No valid model candidates survived the pipeline validation.")
+        self.assertGreater(
+            len(report_data["models"]),
+            0,
+            "No valid model candidates survived the pipeline validation.",
+        )
 
         # Extract the top-ranked model candidate (index 0)
         best_model = report_data["models"][0]
@@ -86,20 +87,36 @@ class TestE2EPipelineRealData(unittest.TestCase):
 
         # Robust Key Extraction for Facts and Dimensions (supports multiple naming conventions)
         fact_tables = parse_table_list(best_model.get("fact_tables") or best_model.get("facts"))
-        dim_tables = parse_table_list(best_model.get("dimension_tables") or best_model.get("dimensions"))
+        dim_tables = parse_table_list(
+            best_model.get("dimension_tables") or best_model.get("dimensions")
+        )
 
         # 4. Business Logic Assertions: Verify table role classification from logs
         # 'sales' is correctly identified as the central Fact table
-        self.assertIn("sales", fact_tables, f"The 'sales' table should be recognized as a Fact table. Found: {fact_tables}")
-        self.assertEqual(len(fact_tables), 1, f"There should be only 1 central Fact table. Found: {fact_tables}")
+        self.assertIn(
+            "sales",
+            fact_tables,
+            f"The 'sales' table should be recognized as a Fact table. Found: {fact_tables}",
+        )
+        self.assertEqual(
+            len(fact_tables), 1, f"There should be only 1 central Fact table. Found: {fact_tables}"
+        )
 
         # Verify the 4 validated Dimension tables connected to the 'sales' ecosystem
         expected_dimensions = {"calendar", "customers", "products", "shipments"}
-        self.assertEqual(set(dim_tables), expected_dimensions, f"Expected dimensions {expected_dimensions}, got {dim_tables}")
+        self.assertEqual(
+            set(dim_tables),
+            expected_dimensions,
+            f"Expected dimensions {expected_dimensions}, got {dim_tables}",
+        )
 
         # 'categories_source' must be excluded from the final star model as it is isolated
-        self.assertNotIn("categories_source", fact_tables, "Isolated table should not be a Fact table.")
-        self.assertNotIn("categories_source", dim_tables, "Isolated table should not be a Dimension table.")
+        self.assertNotIn(
+            "categories_source", fact_tables, "Isolated table should not be a Fact table."
+        )
+        self.assertNotIn(
+            "categories_source", dim_tables, "Isolated table should not be a Dimension table."
+        )
 
         # 5. Model Metadata Assertions (Ultra-robust fallback validation)
         model_type = (
@@ -113,7 +130,11 @@ class TestE2EPipelineRealData(unittest.TestCase):
             if "star" in str(best_model["id"]).lower():
                 model_type = "STAR"
 
-        self.assertEqual(model_type, "STAR", f"The inferred model architecture should be a STAR schema. Keys found: {list(best_model.keys())}")
+        self.assertEqual(
+            model_type,
+            "STAR",
+            f"The inferred model architecture should be a STAR schema. Keys found: {list(best_model.keys())}",
+        )
 
         # 6. Graph Relationship Assertions
         # The certification report does not serialise the edge list directly.
@@ -124,5 +145,5 @@ class TestE2EPipelineRealData(unittest.TestCase):
             "STRUCTURAL_VALIDATION",
             passed_rules,
             f"STRUCTURAL_VALIDATION must be in passed_rules to confirm all joins between "
-            f"'sales' and its dimensions are valid. Actual passed_rules: {passed_rules}"
+            f"'sales' and its dimensions are valid. Actual passed_rules: {passed_rules}",
         )

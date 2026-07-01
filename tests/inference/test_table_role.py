@@ -255,3 +255,45 @@ def test_load_roles_reads_stored_roles() -> None:
     assert roles[0].table_name == "sales"
     assert roles[0].role == "FACT"
     assert roles[0].confidence == 0.85
+
+
+def test_infer_roles_combines_graph_profiles_and_logical_evidence() -> None:
+    engine = TableRoleEngine(MagicMock())
+    engine.load_table_row_counts = MagicMock(return_value={"fact_sales": 1000, "dim_customer": 100})
+    engine.load_primary_key_tables = MagicMock(return_value={"fact_sales", "dim_customer"})
+    engine.load_outgoing_edges = MagicMock(return_value={"fact_sales": 1})
+    engine.load_incoming_edges = MagicMock(return_value={"dim_customer": 1})
+    engine.load_column_type_counts = MagicMock(
+        return_value={
+            "fact_sales": {"numeric": 3, "text": 1, "date": 1},
+            "dim_customer": {"numeric": 1, "text": 3, "date": 0},
+        }
+    )
+    engine.load_additive_measure_counts = MagicMock(return_value={"fact_sales": 1})
+    engine.load_transactional_grain_tables = MagicMock(return_value={"fact_sales"})
+    engine.load_logical_table_roles = MagicMock(
+        return_value={
+            "fact_sales": "FACT_CANDIDATE",
+            "dim_customer": "DIMENSION_CANDIDATE",
+        }
+    )
+
+    roles = engine.infer_roles()
+
+    assert [role.table_name for role in roles] == ["dim_customer", "fact_sales"]
+    assert {role.table_name: role.role for role in roles} == {
+        "fact_sales": "FACT",
+        "dim_customer": "DIMENSION",
+    }
+
+
+def test_is_lookup_table_requires_reference_shape_without_measure() -> None:
+    assert TableRoleEngine.is_lookup_table(50, 0, 1, True, 1, 3, 0) is True
+    assert TableRoleEngine.is_lookup_table(50, 0, 1, False, 1, 3, 0) is False
+    assert TableRoleEngine.is_lookup_table(50, 0, 1, True, 1, 3, 1) is False
+
+
+def test_role_from_logical_table_preserves_ambiguous_role() -> None:
+    assert TableRoleEngine.role_from_logical_table("FACT_CANDIDATE")[0] == "FACT"
+    assert TableRoleEngine.role_from_logical_table("DIMENSION_CANDIDATE")[0] == "DIMENSION"
+    assert TableRoleEngine.role_from_logical_table("UNKNOWN_CANDIDATE")[0] == "UNKNOWN"

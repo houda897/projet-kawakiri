@@ -143,11 +143,7 @@ class SQLViewGenerator:
             return self.select_reachable_edges(fact_table, self.deduplicate_edges(edges))
 
         return self.deduplicate_edges(
-            [
-                edge
-                for edge in edges
-                if edge["source_table"] == fact_table and edge["depth"] == 1
-            ]
+            [edge for edge in edges if edge["source_table"] == fact_table and edge["depth"] == 1]
         )
 
     def deduplicate_edges(self, edges: list[dict]) -> list[dict]:

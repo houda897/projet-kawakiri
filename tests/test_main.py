@@ -41,15 +41,13 @@ def test_run_all_executes_validations_before_certification_and_report(monkeypatc
             monkeypatch.setattr(
                 main,
                 step_name,
-                lambda path, current_step=step_name: (
-                    calls.append(current_step) or ["source_table"]
-                ),
+                lambda path, current_step=step_name: calls.append(current_step) or ["source_table"],
             )
         elif step_name == "run_logical_table_building":
             monkeypatch.setattr(
                 main,
                 step_name,
-                lambda current_step=step_name: (calls.append(current_step) or ["logical_table"]),
+                lambda current_step=step_name: calls.append(current_step) or ["logical_table"],
             )
         elif step_name == "run_pk_inference":
             monkeypatch.setattr(

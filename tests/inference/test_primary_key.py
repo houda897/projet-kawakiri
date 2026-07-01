@@ -1,4 +1,5 @@
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from inference.key_ranking import RankedKeyCandidate
 from inference.primary_key import PrimaryKeyCandidate, PrimaryKeyEngine
@@ -155,3 +156,105 @@ def test_logical_table_key_overrides_accidental_simple_key() -> None:
     )
 
     assert best_by_table["logical_shipping"].column_names == ("postal_code", "city")
+
+
+def test_compute_key_shape_requires_complete_exact_tuple() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(result_rows=[(100, 0, 100)])
+    engine = PrimaryKeyEngine(db)
+
+    rows, null_ratio, uniqueness_ratio = engine.compute_key_shape(
+        "order_items",
+        ("order_id", "line_id"),
+    )
+
+    assert rows == 100
+    assert null_ratio == 0.0
+    assert uniqueness_ratio == 1.0
+    sql = db.query.call_args.args[0]
+    assert "uniqExact(tuple" in sql
+    assert "order_id" in sql and "line_id" in sql
+
+
+def test_infer_candidates_marks_source_candidates_as_preliminary() -> None:
+    db = MagicMock()
+    engine = PrimaryKeyEngine(db)
+    ranked = RankedKeyCandidate(
+        database_name="lab_db",
+        table_name="orders",
+        column_names=("order_id",),
+        column_types=("String",),
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.95,
+        key_like_column_count=1,
+        numeric_column_count=0,
+        measure_like_column_count=0,
+        low_cardinality_column_count=0,
+        confidence=1.0,
+        rank_reason="exact_source_key",
+    )
+    engine.infer_ranked_simple_candidates = MagicMock(return_value=[ranked])
+    engine.find_tables_without_candidates = MagicMock(return_value=[])
+    engine.low_cardinality_analyzer.find_columns = MagicMock(return_value=[])
+    engine.low_cardinality_analyzer.to_column_name_set = MagicMock(return_value=set())
+    engine.composite_key_engine.generate_composite_candidates = MagicMock(return_value=[])
+
+    candidates = engine.infer_candidates(
+        select_best=False,
+        analysis_scope="SOURCE",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].analysis_scope == "SOURCE"
+    assert candidates[0].is_official is False
+    assert candidates[0].column_name == "order_id"
+
+
+def test_infer_ranked_simple_candidates_rechecks_exact_uniqueness() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(
+        result_rows=[("lab_db", "orders", "order_id", "String", 100, 0.0, 1.0, 0.95)]
+    )
+    engine = PrimaryKeyEngine(db)
+    engine.low_cardinality_analyzer.find_columns = MagicMock(return_value=[])
+    engine.compute_key_shape = MagicMock(return_value=(100, 0.0, 1.0))
+
+    candidates = engine.infer_ranked_simple_candidates(table_names={"orders"})
+
+    assert len(candidates) == 1
+    assert candidates[0].column_names == ("order_id",)
+    engine.compute_key_shape.assert_called_once_with("orders", ("order_id",))
+
+
+def test_load_column_types_preserves_determinant_order() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(
+        result_rows=[("line_id", "Int64"), ("order_id", "String")]
+    )
+    engine = PrimaryKeyEngine(db)
+
+    result = engine.load_column_types("items", ("order_id", "line_id"))
+
+    assert result == ("String", "Int64")
+
+
+def test_infer_logical_table_key_uses_complete_declared_determinant() -> None:
+    db = MagicMock()
+    db.query.side_effect = [
+        SimpleNamespace(result_rows=[("logical_shipping", "postal_code, city")]),
+        SimpleNamespace(result_rows=[("postal_code", "String"), ("city", "String")]),
+        SimpleNamespace(result_rows=[(100, 0, 100)]),
+        SimpleNamespace(result_rows=[(0.92,)]),
+    ]
+    engine = PrimaryKeyEngine(db)
+
+    candidates = engine.infer_logical_table_key_candidates(
+        threshold=0.999999999,
+        low_cardinality_columns=set(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].column_names == ("postal_code", "city")
+    assert candidates[0].uniqueness_ratio == 1.0
