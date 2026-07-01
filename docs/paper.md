@@ -23,15 +23,16 @@ affiliations:
   - index: 2
     name: "Aix-Marseille School of Economics - AMSE, France"
 date: 19 June 2026
-bibliography: paper.bib
+bibliography: ../paper.bib
 ---
 
 ## Summary
 
 Kawakiri is an open-source library for reverse-engineering dimensional models from
 undocumented tabular data sources. Given a folder of raw CSV exports, it ingests the
-data into ClickHouse, profiles every column, infers candidate primary keys and join
-relationships, classifies tables into fact and dimension roles, assembles candidate
+data into ClickHouse, profiles every column, reconstructs non-overlapping functional
+column groups, materializes logical tables, infers candidate primary keys and join
+relationships, classifies logical tables into fact and dimension roles, assembles candidate
 dimensional-model graphs (star, snowflake, or constellation), and validates each
 candidate against a fixed set of structural rules before certifying it in a JSON
 report. Unlike tools that require an analyst to declare keys and relationships up
@@ -83,8 +84,9 @@ granularity or aggregation stability, both established concerns in dimensional-m
 methodology [@kimball2013].
 
 Kawakiri's contribution is to combine the two: it infers keys, joins, and
-fact/dimension roles statistically, without relying on declared constraints or
-column-naming heuristics, and then subjects the resulting candidate model to the same
+fact/dimension roles statistically, without requiring declared constraints. Column names
+can contribute weak secondary evidence, but physical and statistical tests carry the
+decision. Kawakiri then subjects the resulting candidate model to the same
 class of structural checks (referential integrity, granularity, semantic separation,
 aggregation stability) that a dimensional-modeling practitioner would apply manually.
 For research and teaching contexts that involve undocumented or rapidly changing source
@@ -102,6 +104,9 @@ monolithic inference step:
 -> ingestion 
 -> profiling 
 -> identifiability scoring 
+-> functional-dependency grouping
+-> logical fact/dimension materialization
+-> logical-table profiling
 -> primary-key inference
 -> join inference 
 -> adjacency-graph construction 
@@ -119,9 +124,9 @@ monolithic inference step:
 
 Each stage persists its output to a metadata store kept in a database separate from
 the analytical data being modeled (`META_DB` vs. `CH_DATABASE`), so a candidate model,
-its supporting statistics, and its validation issues can be inspected or replayed
-independently of the source data, and re-running the pipeline does not require
-re-deriving earlier stages from scratch.
+its supporting statistics, and its validation issues can be inspected independently.
+Individual CLI stages can be rerun when their prerequisite metadata is still available;
+`run-all` deliberately rebuilds computed metadata for a reproducible complete execution.
 
 ClickHouse was chosen as the underlying engine because the profiling stage is
 dominated by columnar aggregations (distinct-value counts, null ratios, entropy
@@ -138,7 +143,10 @@ so a certification report can state exactly which rule a candidate failed and wh
 ## Mathematics and algorithms
 
 Kawakiri does not infer keys, joins, and table roles from column names alone; each
-hypothesis is checked against statistical evidence computed during profiling.
+hypothesis is checked against physical or statistical evidence computed from the data.
+Before key inference, functional dependencies reconstruct coherent logical groups. A
+column is attached to a group only after a dependency test, while unassigned columns
+remain explicit singletons in grouping metadata.
 
 | Metric | Interpretation |
 | --- | --- |
@@ -164,7 +172,7 @@ high-entropy, high-variability numeric columns support a fact classification.
 table $T_s$ to a candidate primary key $K_t$ in table $T_t$ is accepted when the join
 success ratio
 
-$$JSR(C_s \rightarrow K_t) = \frac{|\pi_{C_s}(T_s) \cap \pi_{K_t}(T_t)|}{|\pi_{C_s}(T_s)|}$$
+$$JSR(C_s \rightarrow K_t) = \frac{N_{matched}}{N_{source,non-null}}$$
 
 meets a configurable tolerance $\theta_{jsr}$ (default $0.95$). The accepted edges form
 an adjacency matrix $A$, which is checked for cycles via a depth-first traversal; a
@@ -207,19 +215,3 @@ stage and validation rule is implemented and tested as an independent unit, and 
 certification report format is designed so that new structural rules can be added
 without changing the report schema.
 
-## AI usage disclosure
-
-Generative AI assistance (Claude Sonnet 4.6 / ### AUTRE ###) was used during this project's development, specifically: (1)
-drafting and debugging portions of the pipeline source code, (2) drafting portions of
-the project documentation, and (3) drafting and revising this paper, including its
-structure and compliance with JOSS submission requirements. All AI-assisted code was
-reviewed, tested and validated by the author and by the author's internship supervisor before
-being merged; no AI-generated code was accepted without this review. Core design
-decisions — the staged pipeline architecture, the choice of statistical metrics, the
-set of structural validation rules, and the database separation between analytical and
-metadata storage — were made by the author.
-
-## Acknowledgements
-
-The authors thanks Mickaël MARTIN NEVOT from Aix-Marseille School of Economics - AMSE and Anthony TINSON from Koushin for
-active supervision and feedback during this internship. This work received no dedicated financial support.

@@ -1,5 +1,5 @@
 site_name: Kawakiri
-site_description: Open Source Reverse Engineering Library (Structure Data Science)
+site_description: Reverse engineering of dimensional models from undocumented tabular data
 theme:
   name: material
   features:
@@ -20,3 +20,18 @@ nav:
   - Home: index.md
   - Installation Guide: installation.md
   - Architecture: architecture.md
+  - Tutorials:
+      - Climate and Ocean: tutorials/climate-ocean.md
+  - API Reference:
+      - English: API_doc.md
+      - Français: API_doc_fr.md
+  - Research Paper: paper.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
