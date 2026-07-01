@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import combinations
 
 from config.scoring import PK_WEIGHTS
 from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
@@ -46,43 +47,36 @@ class CompositeKeyEngine:
         candidate_columns: list[str],
         db: ClickHouseManager,
     ) -> tuple[str, ...]:
-        """Find a unique composite key, then remove unnecessary columns."""
-        current_columns: list[str] = []
+        """Return the smallest unique column combination in deterministic order."""
+        columns = tuple(dict.fromkeys(candidate_columns))
+        if len(columns) < 2:
+            return ()
 
-        for column in dict.fromkeys(candidate_columns):
-            current_columns.append(column)
-            if len(current_columns) < 2:
-                continue
-            if not check_functional_dependency(
+        # First find an upper bound cheaply. The exhaustive search then only
+        # explores widths that can improve that bound.
+        upper_bound = 0
+        for width in range(2, len(columns) + 1):
+            if check_functional_dependency(
                 database_name,
                 table_name,
-                current_columns,
+                list(columns[:width]),
                 db,
             ):
-                continue
+                upper_bound = width
+                break
 
-            changed = True
-            while changed:
-                changed = False
-                for removable_column in tuple(current_columns):
-                    reduced_columns = [
-                        candidate
-                        for candidate in current_columns
-                        if candidate != removable_column
-                    ]
-                    if len(reduced_columns) < 2:
-                        continue
-                    if check_functional_dependency(
-                        database_name,
-                        table_name,
-                        reduced_columns,
-                        db,
-                    ):
-                        current_columns = reduced_columns
-                        changed = True
-                        break
+        if upper_bound == 0:
+            return ()
 
-            return tuple(current_columns)
+        for width in range(2, upper_bound + 1):
+            for candidate in combinations(columns, width):
+                if check_functional_dependency(
+                    database_name,
+                    table_name,
+                    list(candidate),
+                    db,
+                ):
+                    return candidate
 
         return ()
 
@@ -142,9 +136,7 @@ class CompositeKeyEngine:
                     rows=current_combo[0].rows,
                     null_ratio=max(col.null_ratio for col in current_combo),
                     uniqueness_ratio=1.0,
-                    identifiability_score=sum(
-                        col.identifiability_score for col in current_combo
-                    )
+                    identifiability_score=sum(col.identifiability_score for col in current_combo)
                     / len(current_combo),
                     low_cardinality_columns=low_cardinality_columns,
                 )
@@ -173,7 +165,7 @@ class CompositeKeyEngine:
            AND p.table_name = i.table_name
            AND p.column_name = i.column_name
         WHERE p.database_name = %(database)s
-          AND p.null_ratio <= 0.000001
+          AND p.null_rows = 0
           AND NOT startsWith(p.column_name, '__')
         ORDER BY p.table_name, p.column_name
         """

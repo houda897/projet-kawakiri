@@ -19,9 +19,11 @@ from core.naming import (
     is_temporal_like_column,
 )
 from core.schema import is_temporal_type, q_ident
+from inference.source_structure import SourceStructureAnalyzer, SourceTableStructure
 from stats.functional_dependency import check_column_dependency
 
 logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class FunctionalColumnProfile:
@@ -49,6 +51,9 @@ class FunctionalColumnGroup:
     reason: str
     group_score: float = 0.0
     group_role: str = "UNASSIGNED"
+    determinant_distinct_count: int = 0
+    determinant_uniqueness_ratio: float = 1.0
+    repeated_row_count: int = 0
 
     @property
     def all_columns(self) -> tuple[str, ...]:
@@ -69,12 +74,14 @@ class FunctionalGroupBuilder:
 
     def build_groups(self) -> list[FunctionalColumnGroup]:
         profiles_by_table = self.load_profiles_by_table()
+        source_structures = SourceStructureAnalyzer(self.db).load_structures()
         groups = []
 
         for table_name, profiles in profiles_by_table.items():
             dependency_groups = self.build_dependency_groups_for_table(
                 table_name=table_name,
                 profiles=profiles,
+                source_structure=source_structures.get(table_name),
             )
             groups.extend(dependency_groups)
 
@@ -84,11 +91,7 @@ class FunctionalGroupBuilder:
             groups.extend(
                 self.build_singleton_groups(
                     table_name,
-                    [
-                        profile
-                        for profile in profiles
-                        if profile.column_name not in grouped_columns
-                    ],
+                    [profile for profile in profiles if profile.column_name not in grouped_columns],
                 )
             )
 
@@ -98,7 +101,17 @@ class FunctionalGroupBuilder:
         self,
         table_name: str,
         profiles: list[FunctionalColumnProfile],
+        source_structure: SourceTableStructure | None = None,
     ) -> list[FunctionalColumnGroup]:
+        if source_structure and source_structure.is_normalized_entity_source:
+            normalized_group = self.build_normalized_source_group(
+                table_name,
+                profiles,
+                source_structure,
+            )
+            if normalized_group is not None:
+                return [normalized_group]
+
         determinant_candidates = self.select_determinant_candidates(profiles)
         profiles_by_name = {profile.column_name: profile for profile in profiles}
 
@@ -114,9 +127,7 @@ class FunctionalGroupBuilder:
             profiles_by_name,
         )
 
-        assigned_columns = {
-            column for group in selected_groups for column in group.all_columns
-        }
+        assigned_columns = {column for group in selected_groups for column in group.all_columns}
         remaining_profiles = [
             profile for profile in profiles if profile.column_name not in assigned_columns
         ]
@@ -158,11 +169,7 @@ class FunctionalGroupBuilder:
         """Complete groups by repeatedly testing their functional closure."""
         profiles_by_name = {profile.column_name: profile for profile in profiles}
         expanded_groups = list(groups)
-        assigned_columns = {
-            column
-            for group in expanded_groups
-            for column in group.all_columns
-        }
+        assigned_columns = {column for group in expanded_groups for column in group.all_columns}
 
         changed = True
         while changed:
@@ -175,7 +182,11 @@ class FunctionalGroupBuilder:
                     for column in closure_determinants
                     if column in profiles_by_name
                 ]
-                if not self.can_expand_group(determinant_profiles):
+                if not self.can_expand_group(
+                    table_name,
+                    closure_determinants,
+                    determinant_profiles,
+                ):
                     continue
 
                 new_dependents = []
@@ -204,20 +215,63 @@ class FunctionalGroupBuilder:
                     reason="functional_dependency_closure_group",
                     group_score=group.group_score,
                     group_role=group.group_role,
+                    determinant_distinct_count=group.determinant_distinct_count,
+                    determinant_uniqueness_ratio=group.determinant_uniqueness_ratio,
+                    repeated_row_count=group.repeated_row_count,
                 )
                 assigned_columns.update(new_dependents)
                 changed = True
 
         return expanded_groups
 
-    @staticmethod
     def can_expand_group(
+        self,
+        table_name: str,
+        determinant_columns: tuple[str, ...],
         determinant_profiles: list[FunctionalColumnProfile],
     ) -> bool:
-        """Avoid closure tests that would be true only because a column is unique."""
-        return bool(determinant_profiles) and all(
-            profile.uniqueness_ratio < 0.95
-            for profile in determinant_profiles
+        """Reject closures made trivially true by a unique determinant tuple."""
+        if not determinant_profiles:
+            return False
+        _, uniqueness_ratio, repeated_rows = self.compute_determinant_shape(
+            table_name,
+            determinant_columns,
+            determinant_profiles,
+        )
+        return uniqueness_ratio < 0.999999999 and repeated_rows > 0
+
+    def build_normalized_source_group(
+        self,
+        table_name: str,
+        profiles: list[FunctionalColumnProfile],
+        source_structure: SourceTableStructure,
+    ) -> FunctionalColumnGroup | None:
+        """Keep an already normalized referenced entity as one coherent group."""
+        if source_structure.entity_key is None:
+            return None
+        determinant_columns = self.split_columns(source_structure.entity_key.column_name)
+        profile_names = {profile.column_name for profile in profiles}
+        if not determinant_columns or not set(determinant_columns) <= profile_names:
+            return None
+        dependents = tuple(
+            profile.column_name
+            for profile in profiles
+            if profile.column_name not in determinant_columns
+        )
+        rows = max((profile.rows for profile in profiles), default=0)
+        return FunctionalColumnGroup(
+            database_name=CH_DB,
+            source_table=table_name,
+            group_name=self.make_group_name(table_name, determinant_columns),
+            determinant_columns=determinant_columns,
+            dependent_columns=dependents,
+            confidence=1.0,
+            reason="normalized_source_entity_group",
+            group_score=1.0,
+            group_role="NORMALIZED_ENTITY",
+            determinant_distinct_count=rows,
+            determinant_uniqueness_ratio=1.0,
+            repeated_row_count=0,
         )
 
     def build_candidate_groups(
@@ -252,6 +306,15 @@ class FunctionalGroupBuilder:
             max_width=max_width,
         ):
             determinant_column_names = tuple(profile.column_name for profile in determinant_combo)
+            determinant_distinct_count, determinant_uniqueness_ratio, repeated_rows = (
+                self.compute_determinant_shape(
+                    table_name,
+                    determinant_column_names,
+                    list(determinant_combo),
+                )
+            )
+            if determinant_uniqueness_ratio >= 0.999999999 or repeated_rows <= 0:
+                continue
 
             dependents = []
 
@@ -285,10 +348,48 @@ class FunctionalGroupBuilder:
                     reason="stable_functional_dependency_group",
                     group_score=0.0,
                     group_role="GROUP_CANDIDATE",
+                    determinant_distinct_count=determinant_distinct_count,
+                    determinant_uniqueness_ratio=determinant_uniqueness_ratio,
+                    repeated_row_count=repeated_rows,
                 )
             )
 
         return candidate_groups
+
+    def compute_determinant_shape(
+        self,
+        table_name: str,
+        determinant_columns: tuple[str, ...],
+        determinant_profiles: list[FunctionalColumnProfile],
+    ) -> tuple[int, float, int]:
+        """Return tuple cardinality, uniqueness and repeated-row support."""
+        if hasattr(self.db, "query"):
+            columns_sql = ", ".join(q_ident(column) for column in determinant_columns)
+            not_null_sql = " AND ".join(
+                f"{q_ident(column)} IS NOT NULL" for column in determinant_columns
+            )
+            sql = f"""
+            SELECT
+                count() AS non_null_rows,
+                uniqExact(tuple({columns_sql})) AS distinct_rows
+            FROM {q_ident(CH_DB)}.{q_ident(table_name)}
+            WHERE {not_null_sql}
+            """
+            row = self.db.query(sql).result_rows[0]
+            non_null_rows = int(row[0] or 0)
+            distinct_rows = int(row[1] or 0)
+        else:
+            non_null_rows = max((profile.rows for profile in determinant_profiles), default=0)
+            # Unit-level profile evidence cannot reconstruct tuple cardinality;
+            # use the strongest individual cardinality as a conservative bound.
+            approximate_uniqueness = max(
+                (profile.uniqueness_ratio for profile in determinant_profiles),
+                default=1.0,
+            )
+            distinct_rows = round(non_null_rows * approximate_uniqueness)
+
+        uniqueness_ratio = distinct_rows / non_null_rows if non_null_rows else 1.0
+        return distinct_rows, uniqueness_ratio, max(non_null_rows - distinct_rows, 0)
 
     def build_singleton_groups(
         self,
@@ -328,6 +429,9 @@ class FunctionalGroupBuilder:
                 group.reason,
                 group.group_score,
                 group.group_role,
+                group.determinant_distinct_count,
+                group.determinant_uniqueness_ratio,
+                group.repeated_row_count,
             ]
             for group in groups
         ]
@@ -359,6 +463,9 @@ class FunctionalGroupBuilder:
                 "reason",
                 "group_score",
                 "group_role",
+                "determinant_distinct_count",
+                "determinant_uniqueness_ratio",
+                "repeated_row_count",
             ],
         )
         self.db.insert(
@@ -386,6 +493,9 @@ class FunctionalGroupBuilder:
             reason,
             group_score,
             group_role
+            , determinant_distinct_count
+            , determinant_uniqueness_ratio
+            , repeated_row_count
         FROM {q_ident(META_DB)}.functional_column_groups
         WHERE database_name = %(database)s
         ORDER BY source_table, group_name
@@ -403,6 +513,9 @@ class FunctionalGroupBuilder:
                 reason=row[6],
                 group_score=row[7],
                 group_role=row[8],
+                determinant_distinct_count=row[9],
+                determinant_uniqueness_ratio=row[10],
+                repeated_row_count=row[11],
             )
             for row in rows
         ]
@@ -479,16 +592,9 @@ class FunctionalGroupBuilder:
             for profile in profiles
             if profile.null_ratio <= 0.05
             and profile.distinct_count > 1
+            and profile.uniqueness_ratio < 0.95
             and (
-                profile.uniqueness_ratio < 0.95
-                or (
-                    profile.uniqueness_ratio >= 0.999999
-                    and is_key_like_column(profile.column_name)
-                )
-            )
-            and (
-                not is_temporal_type(profile.column_type)
-                or is_key_like_column(profile.column_name)
+                not is_temporal_type(profile.column_type) or is_key_like_column(profile.column_name)
             )
             and (
                 not is_temporal_like_column(profile.column_name)
@@ -532,19 +638,14 @@ class FunctionalGroupBuilder:
         ):
             return True
 
-        unique_determinant = all(
-            determinant.uniqueness_ratio >= 0.999999
-            for determinant in determinant_combo
-        )
-        if not unique_determinant:
-            if is_key_like_column(dependent.column_name):
-                return True
-            if is_grain_like_column(dependent.column_name):
-                return True
-            if is_measure_candidate(dependent):
-                return len(determinant_combo) < 2
-            if not is_descriptive_candidate(dependent):
-                return True
+        if is_key_like_column(dependent.column_name):
+            return True
+        if is_grain_like_column(dependent.column_name):
+            return True
+        if is_measure_candidate(dependent):
+            return True
+        if not is_descriptive_candidate(dependent):
+            return True
 
         determinant_capacity = 1
         for determinant in determinant_combo:
@@ -580,11 +681,9 @@ class FunctionalGroupBuilder:
             key=lambda group: FunctionalGroupBuilder.score_group(group, profiles_by_name),
             reverse=True,
         )
-        preferred_group_by_dependent = (
-            FunctionalGroupBuilder.preferred_group_by_dependent(
-                groups,
-                profiles_by_name,
-            )
+        preferred_group_by_dependent = FunctionalGroupBuilder.preferred_group_by_dependent(
+            groups,
+            profiles_by_name,
         )
         selected = []
 
@@ -596,8 +695,7 @@ class FunctionalGroupBuilder:
                 column
                 for column in group.dependent_columns
                 if column not in assigned_columns
-                and preferred_group_by_dependent.get(column, group.group_name)
-                == group.group_name
+                and preferred_group_by_dependent.get(column, group.group_name) == group.group_name
             )
 
             if not kept_dependents:
@@ -616,6 +714,9 @@ class FunctionalGroupBuilder:
                     profiles_by_name,
                 ),
                 group_role=group.group_role,
+                determinant_distinct_count=group.determinant_distinct_count,
+                determinant_uniqueness_ratio=group.determinant_uniqueness_ratio,
+                repeated_row_count=group.repeated_row_count,
             )
             selected.append(selected_group)
             assigned_columns.update(selected_group.all_columns)
@@ -639,27 +740,25 @@ class FunctionalGroupBuilder:
         ]
 
         if determinant_profiles:
-            avg_uniqueness = sum(
-                profile.uniqueness_ratio for profile in determinant_profiles
-            ) / len(determinant_profiles)
             avg_identifiability = sum(
                 profile.identifiability_score for profile in determinant_profiles
             ) / len(determinant_profiles)
         else:
-            avg_uniqueness = 1.0
             avg_identifiability = 0.0
 
-        compression_gain = max(0.0, 1.0 - avg_uniqueness)
+        compression_gain = max(0.0, 1.0 - group.determinant_uniqueness_ratio)
+        support_ratio = group.repeated_row_count / max(
+            group.repeated_row_count + group.determinant_distinct_count, 1
+        )
         descriptive_richness = sum(
-            1
-            for profile in dependent_profiles
-            if is_descriptive_candidate(profile)
+            1 for profile in dependent_profiles if is_descriptive_candidate(profile)
         )
         measure_dependents = len(dependent_profiles) - descriptive_richness
 
         return (
             group.confidence
             + compression_gain
+            + support_ratio
             + 0.12 * descriptive_richness
             + 0.04 * measure_dependents
             + 0.1 * avg_identifiability
@@ -693,10 +792,7 @@ class FunctionalGroupBuilder:
                 if current is None or score > current[1]:
                     best[dependent] = (group.group_name, score)
 
-        return {
-            dependent: group_name
-            for dependent, (group_name, _) in best.items()
-        }
+        return {dependent: group_name for dependent, (group_name, _) in best.items()}
 
     @staticmethod
     def score_dependency_owner(
@@ -732,10 +828,7 @@ class FunctionalGroupBuilder:
         determinant_columns: tuple[str, ...],
         dependent_column: str,
     ) -> bool:
-        if any(
-            belongs_to_key_concept(column, dependent_column)
-            for column in determinant_columns
-        ):
+        if any(belongs_to_key_concept(column, dependent_column) for column in determinant_columns):
             return True
 
         return any(
@@ -758,8 +851,7 @@ class FunctionalGroupBuilder:
         return sum(
             0.28
             for profile in determinant_profiles
-            if is_key_like_column(profile.column_name)
-            and 0.01 <= profile.uniqueness_ratio < 0.95
+            if is_key_like_column(profile.column_name) and 0.01 <= profile.uniqueness_ratio < 0.95
         )
 
     @staticmethod
@@ -788,9 +880,9 @@ class FunctionalGroupBuilder:
         if not determinant_profiles:
             return 0.0
 
-        avg_uniqueness = sum(
-            profile.uniqueness_ratio for profile in determinant_profiles
-        ) / len(determinant_profiles)
+        avg_uniqueness = sum(profile.uniqueness_ratio for profile in determinant_profiles) / len(
+            determinant_profiles
+        )
         if avg_uniqueness <= 0.25:
             return 0.0
 

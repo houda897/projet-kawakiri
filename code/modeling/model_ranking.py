@@ -26,6 +26,8 @@ class ModelRanking:
         )
 
         score += len(candidate.dimension_tables) * PARSIMONY_WEIGHTS.get("dimension_reward", 8.0)
+        coverage_ratio = float(getattr(candidate, "coverage_ratio", 1.0))
+        score += coverage_ratio * PARSIMONY_WEIGHTS.get("model_coverage_reward", 0.0)
 
         if (
             candidate.model_type == DecisionModelType.CONSTELLATION
@@ -62,13 +64,17 @@ class ModelRanking:
         scored_data.sort(key=lambda x: x[1], reverse=True)
 
         raw_scores_by_model = {
-            candidate.model_id: raw_score
-            for candidate, raw_score in raw_scored_data
+            candidate.model_id: raw_score for candidate, raw_score in raw_scored_data
         }
 
         self._store_scores(
             [
-                (candidate.model_id, raw_scores_by_model[candidate.model_id], normalized_score)
+                (
+                    candidate.model_id,
+                    raw_scores_by_model[candidate.model_id],
+                    normalized_score,
+                    float(getattr(candidate, "coverage_ratio", 1.0)),
+                )
                 for candidate, normalized_score in scored_data
             ]
         )
@@ -92,13 +98,13 @@ class ModelRanking:
             for candidate, score in scored_data
         ]
 
-    def _store_scores(self, scores_data: list[tuple[str, float, float]]) -> None:
+    def _store_scores(self, scores_data: list[tuple[str, float, float, float]]) -> None:
         """Store the parsimony scores in a dedicated metadata table"""
         clear_metadata_table(self.db, "decision_model_scores")
 
         rows = [
-            [CH_DB, model_id, raw_score, normalized_score]
-            for model_id, raw_score, normalized_score in scores_data
+            [CH_DB, model_id, raw_score, normalized_score, coverage_score]
+            for model_id, raw_score, normalized_score, coverage_score in scores_data
         ]
 
         self.db.insert(
@@ -109,6 +115,7 @@ class ModelRanking:
                 "model_id",
                 "parsimony_score",
                 "normalized_score",
+                "coverage_score",
             ],
         )
 

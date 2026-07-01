@@ -65,6 +65,7 @@ LOCATION_NAME_TOKENS = {
     "latitude",
     "lon",
     "longitude",
+    "lng",
     "postal",
     "postcode",
     "region",
@@ -101,9 +102,7 @@ def normalize_column_name(column_name: str | None) -> str:
 
     name = CAMELCASE_KEY_SUFFIX_REGEX.sub(r"_\1", column_name.strip())
     tokens = [
-        token
-        for token in _split_name_tokens(name)
-        if token and token not in TECHNICAL_KEY_TOKENS
+        token for token in _split_name_tokens(name) if token and token not in TECHNICAL_KEY_TOKENS
     ]
 
     return "".join(tokens)
@@ -219,9 +218,7 @@ def normalize_key_concept_tokens(column_name: str | None) -> tuple[str, ...]:
     Return semantic tokens for a key concept, without identifier markers.
     """
     return tuple(
-        token
-        for token in split_column_name_tokens(column_name)
-        if token not in KEY_LIKE_TOKENS
+        token for token in split_column_name_tokens(column_name) if token not in KEY_LIKE_TOKENS
     )
 
 
@@ -309,11 +306,7 @@ def measure_candidate_score(profile: Any) -> float:
         and not is_measure_like_column(column_name)
     ):
         return 0.0
-    if (
-        distinct_count <= 2
-        and entropy_ratio <= 0.0
-        and variation_coefficient <= 0.0
-    ):
+    if distinct_count <= 2 and entropy_ratio <= 0.0 and variation_coefficient <= 0.0:
         return 0.0
 
     score = 0.3 if is_continuous_numeric_type(column_type) else 0.1
@@ -373,12 +366,15 @@ def descriptive_candidate_score(profile: Any) -> float:
     Score how much a column behaves like a descriptive dimension attribute.
     """
     column_name = _profile_attr(profile, "column_name", "")
+    column_type = _profile_attr(profile, "column_type", "")
     distinct_count = int(_profile_attr(profile, "distinct_count", 0) or 0)
     uniqueness_ratio = float(_profile_attr(profile, "uniqueness_ratio", 0.0) or 0.0)
 
     if distinct_count <= 1 and not is_location_like_column(column_name):
         return 0.0
     if is_key_like_column(column_name) or is_grain_like_column(column_name):
+        return 0.0
+    if is_temporal_type(column_type) or is_temporal_like_column(column_name):
         return 0.0
     if is_measure_candidate(profile):
         return 0.0

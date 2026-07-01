@@ -31,6 +31,9 @@ class DecisionModelCandidate:
     join_count: int
     attribute_count: int
     numeric_attribute_count: int
+    covered_fact_count: int = 0
+    total_fact_count: int = 0
+    coverage_ratio: float = 1.0
 
     @property
     def model_id(self) -> str:
