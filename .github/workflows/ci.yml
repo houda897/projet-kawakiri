@@ -9,13 +9,13 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    stragtegy:
+    strategy:
       matrix:
-        python-version ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - name: Chechkout repository
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
@@ -26,7 +26,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest.cov
+        pip install pytest pytest-cov
         pip install -e ".[dev]"
         
     - name: Check formatting with Black
@@ -50,8 +50,7 @@ on:
   push:
     paths:
       - 'paper.md'
-      - 'biblio.bib'
-      - '.github/workflows/joss-paper.yml'
+      - 'paper.bib'
 
 jobs:
   paper:
@@ -61,10 +60,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Build PDF using Inara
-        uses: openjournals/inara@v1
+      - name: Build PDF
+        uses: openjournals/openjournals-draft-action@master
         with:
-          metadata_file: paper.md
+          journal: joss
           
       - name: Upload PDF artifact
         uses: actions/upload-artifact@v4

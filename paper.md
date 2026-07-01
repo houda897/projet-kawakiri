@@ -12,18 +12,13 @@ authors:
     affiliation: 1
   - name: "BERGER Maxime"
     affiliation: 2
-active direction:
-  - name: "TINSON Anthony"
-    affiliation: 1
-  - name: "MARTIN NEVOT Mickaël"
-    affiliation: 2
 affiliations:
   - index: 1
     name: "KOUSHIN, France"
   - index: 2
     name: "Aix-Marseille School of Economics - AMSE, France"
 date: 19 June 2026
-bibliography: ../paper.bib
+bibliography: paper.bib
 ---
 
 ## Summary
@@ -174,10 +169,14 @@ success ratio
 
 $$JSR(C_s \rightarrow K_t) = \frac{N_{matched}}{N_{source,non-null}}$$
 
-meets a configurable tolerance $\theta_{jsr}$ (default $0.95$). The accepted edges form
+meets a configurable tolerance $\theta_{jsr}$ (default $0.95$) and where $N_{matched}$ is the number of rows successfully joined, and $N_{source,non-null}$ is the number of non-null rows in the source column.
+
+ The accepted edges form
 an adjacency matrix $A$, which is checked for cycles via a depth-first traversal; a
 candidate model is rejected if $A$ is not acyclic, since a cyclic join graph cannot be
 resolved into a well-defined star, snowflake, or constellation shape.
+
+
 
 **Aggregation stability.** For a measure $M$ in fact table $F$ and a categorical
 attribute $G$ of dimension $D$, the engine compares the row-level sum $\Sigma_{fine} =
@@ -215,3 +214,17 @@ stage and validation rule is implemented and tested as an independent unit, and 
 certification report format is designed so that new structural rules can be added
 without changing the report schema.
 
+## AI usage disclosure
+
+Generative AI assistance (Anthropic Claude 3.5 Sonnet and GitHub Copilot) was used during this project's development, specifically: (1)
+drafting and debugging portions of the pipeline source code, (2) drafting portions of
+the project documentation, and (3) drafting and revising this paper, including its
+structure and compliance with JOSS submission requirements. All AI-assisted code was
+reviewed and validated by the author and by the author's internship supervisor before
+being merged; no AI-generated code was accepted without this review. Core design
+decisions — the staged pipeline architecture, the choice of statistical metrics, the
+set of structural validation rules, and the database separation between analytical and metadata storage  were made by the author.
+
+## Acknowledgements
+
+The author thanks Mickaël Martin novet from Aix-Marseille school of echonomics and Anthony Tinson from Koushin for active supervision and feedback during this internship. This work received no dedicated financial support
