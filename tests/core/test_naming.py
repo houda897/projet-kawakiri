@@ -36,6 +36,9 @@ def test_is_key_like_column_detects_real_identifier_tokens() -> None:
     assert is_key_like_column("ticket_no")
     assert is_key_like_column("status_code")
     assert is_key_like_column("book_ref")
+    assert is_key_like_column("PRODUCTID")
+    assert is_key_like_column("SALESORDERID")
+    assert is_key_like_column("CHANGEDBY")
 
 
 def test_is_key_like_column_avoids_semantic_false_positives() -> None:
@@ -45,6 +48,7 @@ def test_is_key_like_column_avoids_semantic_false_positives() -> None:
     assert not is_key_like_column("casino")
     assert not is_key_like_column("unicode")
     assert not is_key_like_column("preference")
+    assert not is_key_like_column("VALID")
 
 
 def test_is_measure_like_column_detects_measure_tokens() -> None:
@@ -75,16 +79,32 @@ def test_measure_candidate_name_is_only_a_weak_bonus() -> None:
     )
 
 
+def test_nearly_unique_integer_without_measure_evidence_is_not_measure() -> None:
+    assert not is_measure_candidate(
+        ColumnProfile(
+            "technical_number",
+            "Int64",
+            distinct_count=100,
+            uniqueness_ratio=1.0,
+            entropy_ratio=1.0,
+            variation_coefficient=0.5,
+        ),
+    )
+
+
 def test_is_grain_like_column_detects_line_level_tokens() -> None:
     assert is_grain_like_column("order_line_item")
     assert is_grain_like_column("line_number")
     assert not is_grain_like_column("customer_name")
+    assert is_grain_like_column("SALESORDERITEM")
 
 
 def test_is_temporal_like_column_detects_calendar_tokens() -> None:
     assert is_temporal_like_column("order_date")
     assert is_temporal_like_column("fiscal_year")
     assert not is_temporal_like_column("customer_name")
+    assert is_temporal_like_column("CREATEDAT")
+    assert not is_temporal_like_column("candidate")
 
 
 def test_normalize_column_name_keeps_words_ending_like_keys() -> None:

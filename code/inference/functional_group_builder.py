@@ -134,15 +134,91 @@ class FunctionalGroupBuilder:
                 min_width=2,
                 max_width=min(2, len(remaining_determinants)),
             )
-            selected_groups.extend(
-                self.select_non_overlapping_groups(
-                    composite_groups,
-                    profiles_by_name,
-                    already_assigned=assigned_columns,
-                )
+            selected_composite_groups = self.select_non_overlapping_groups(
+                composite_groups,
+                profiles_by_name,
+                already_assigned=assigned_columns,
             )
+            selected_groups.extend(selected_composite_groups)
+
+        selected_groups = self.expand_groups_with_unassigned_columns(
+            table_name=table_name,
+            groups=selected_groups,
+            profiles=profiles,
+        )
 
         return sorted(selected_groups, key=lambda group: group.group_name)
+
+    def expand_groups_with_unassigned_columns(
+        self,
+        table_name: str,
+        groups: list[FunctionalColumnGroup],
+        profiles: list[FunctionalColumnProfile],
+    ) -> list[FunctionalColumnGroup]:
+        """Complete groups by repeatedly testing their functional closure."""
+        profiles_by_name = {profile.column_name: profile for profile in profiles}
+        expanded_groups = list(groups)
+        assigned_columns = {
+            column
+            for group in expanded_groups
+            for column in group.all_columns
+        }
+
+        changed = True
+        while changed:
+            changed = False
+
+            for index, group in enumerate(expanded_groups):
+                closure_determinants = group.all_columns
+                determinant_profiles = [
+                    profiles_by_name[column]
+                    for column in closure_determinants
+                    if column in profiles_by_name
+                ]
+                if not self.can_expand_group(determinant_profiles):
+                    continue
+
+                new_dependents = []
+                for profile in profiles:
+                    if profile.column_name in assigned_columns:
+                        continue
+                    if check_column_dependency(
+                        database=CH_DB,
+                        table=table_name,
+                        determinant_columns=list(closure_determinants),
+                        dependent_column=profile.column_name,
+                        db_manager=self.db,
+                    ):
+                        new_dependents.append(profile.column_name)
+
+                if not new_dependents:
+                    continue
+
+                expanded_groups[index] = FunctionalColumnGroup(
+                    database_name=group.database_name,
+                    source_table=group.source_table,
+                    group_name=group.group_name,
+                    determinant_columns=closure_determinants,
+                    dependent_columns=tuple(sorted(new_dependents)),
+                    confidence=group.confidence,
+                    reason="functional_dependency_closure_group",
+                    group_score=group.group_score,
+                    group_role=group.group_role,
+                )
+                assigned_columns.update(new_dependents)
+                changed = True
+
+        return expanded_groups
+
+    @staticmethod
+    def can_expand_group(
+        determinant_profiles: list[FunctionalColumnProfile],
+    ) -> bool:
+        """Avoid closure tests that would be true only because a column is unique."""
+        return bool(determinant_profiles) and all(
+            profile.uniqueness_ratio < 0.95
+            for profile in determinant_profiles
+        )
 
     def build_candidate_groups(
         self,
@@ -403,7 +479,13 @@ class FunctionalGroupBuilder:
             for profile in profiles
             if profile.null_ratio <= 0.05
             and profile.distinct_count > 1
-            and profile.uniqueness_ratio < 0.95
+            and (
+                profile.uniqueness_ratio < 0.95
+                or (
+                    profile.uniqueness_ratio >= 0.999999
+                    and is_key_like_column(profile.column_name)
+                )
+            )
             and (
                 not is_temporal_type(profile.column_type)
                 or is_key_like_column(profile.column_name)
@@ -450,8 +532,19 @@ class FunctionalGroupBuilder:
         ):
             return True
 
-        if FunctionalGroupBuilder.is_invalid_dependent_column(dependent):
-            return True
+        unique_determinant = all(
+            determinant.uniqueness_ratio >= 0.999999
+            for determinant in determinant_combo
+        )
+        if not unique_determinant:
+            if is_key_like_column(dependent.column_name):
+                return True
+            if is_grain_like_column(dependent.column_name):
+                return True
+            if is_measure_candidate(dependent):
+                return len(determinant_combo) < 2
+            if not is_descriptive_candidate(dependent):
+                return True
 
         determinant_capacity = 1
         for determinant in determinant_combo:

@@ -6,7 +6,7 @@ from typing import Any
 from core.schema import is_continuous_numeric_type, is_numeric_type, is_temporal_type
 
 TECHNICAL_KEY_TOKENS = {"id", "fk", "pk", "key"}
-KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref"}
+KEY_LIKE_TOKENS = TECHNICAL_KEY_TOKENS | {"no", "code", "ref", "by"}
 MEASURE_NAME_TOKENS = {
     "amount",
     "cost",
@@ -34,8 +34,11 @@ MEASURE_NAME_TOKENS = {
     "remise",
 }
 GRAIN_NAME_TOKENS = {
+    "item",
     "line",
     "ligne",
+    "pos",
+    "position",
     "row",
     "sequence",
     "seq",
@@ -80,6 +83,9 @@ ENTITY_ATTRIBUTE_TOKENS = {
 SEPARATOR_REGEX = re.compile(r"[_\-\s]+")
 CAMELCASE_KEY_SUFFIX_REGEX = re.compile(r"(?<=[a-z0-9])(ID|Id|FK|Fk|PK|Pk|Key|No|Ref)$")
 CAMELCASE_BOUNDARY_REGEX = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+COMPACT_UPPER_KEY_REGEX = re.compile(
+    r"^[A-Z][A-Z0-9]{3,}(?:ID|FK|PK|KEY|NO|REF|BY)$",
+)
 YEAR_TOKEN_REGEX = re.compile(r"^(?:19|20)\d{2}$")
 
 
@@ -123,7 +129,12 @@ def is_key_like_column(column_name: str | None) -> bool:
     """
     Detect technical identifier columns without corrupting words like valid or rapid.
     """
-    return any(token in KEY_LIKE_TOKENS for token in split_column_name_tokens(column_name))
+    if any(token in KEY_LIKE_TOKENS for token in split_column_name_tokens(column_name)):
+        return True
+
+    raw_name = (column_name or "").strip()
+    compact_name = re.sub(r"[_\-\s]+", "", raw_name)
+    return raw_name.isupper() and bool(COMPACT_UPPER_KEY_REGEX.fullmatch(compact_name))
 
 
 def is_measure_like_column(column_name: str | None) -> bool:
@@ -143,7 +154,12 @@ def is_grain_like_column(column_name: str | None) -> bool:
     Detect row-grain or sequence columns that identify a fact level but are not measures.
     """
     tokens = split_column_name_tokens(column_name)
-    return any(token in GRAIN_NAME_TOKENS for token in tokens)
+    if any(token in GRAIN_NAME_TOKENS for token in tokens):
+        return True
+
+    raw_name = (column_name or "").strip()
+    compact_name = re.sub(r"[_\-\s]+", "", raw_name).lower()
+    return raw_name.isupper() and compact_name.endswith(tuple(GRAIN_NAME_TOKENS))
 
 
 def is_temporal_like_column(column_name: str | None) -> bool:
@@ -151,7 +167,15 @@ def is_temporal_like_column(column_name: str | None) -> bool:
     Detect calendar/date semantic columns from their name.
     """
     tokens = split_column_name_tokens(column_name)
-    return any(token in TEMPORAL_NAME_TOKENS for token in tokens)
+    if any(token in TEMPORAL_NAME_TOKENS for token in tokens):
+        return True
+
+    raw_name = (column_name or "").strip()
+    compact_name = re.sub(r"[_\-\s]+", "", raw_name).lower()
+    return raw_name.isupper() and (
+        compact_name.endswith(("date", "datetime", "timestamp"))
+        or compact_name in {"createdat", "changedat", "updatedat"}
+    )
 
 
 def is_location_like_column(column_name: str | None) -> bool:
@@ -279,17 +303,27 @@ def measure_candidate_score(profile: Any) -> float:
         return 0.0
     if is_key_like_column(column_name) or is_grain_like_column(column_name):
         return 0.0
+    if (
+        not is_continuous_numeric_type(column_type)
+        and uniqueness_ratio >= 0.95
+        and not is_measure_like_column(column_name)
+    ):
+        return 0.0
+    if (
+        distinct_count <= 2
+        and entropy_ratio <= 0.0
+        and variation_coefficient <= 0.0
+    ):
+        return 0.0
 
-    score = 0.2
-    if is_continuous_numeric_type(column_type):
-        score += 0.2
-    score += min(max(uniqueness_ratio, 0.0), 1.0) * 0.4
-    score += min(max(entropy_ratio, 0.0), 1.0) * 0.25
+    score = 0.3 if is_continuous_numeric_type(column_type) else 0.1
+    score += min(max(1.0 - uniqueness_ratio, 0.0), 1.0) * 0.15
+    score += min(max(entropy_ratio, 0.0), 1.0) * 0.2
     score += min(max(variation_coefficient, 0.0), 1.0) * 0.3
     if distinct_count >= 3:
         score += 0.1
     if is_measure_like_column(column_name):
-        score += 0.1
+        score += 0.15
 
     return min(score, 1.0)
 

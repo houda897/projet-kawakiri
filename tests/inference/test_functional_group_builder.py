@@ -140,7 +140,7 @@ def test_simple_determinants_are_preferred_before_combinations(monkeypatch) -> N
     )
 
     assert [group.determinant_columns for group in groups] == [("customer_id",)]
-    assert not any(len(determinants) > 1 for determinants, _ in calls)
+    assert (("customer_id", "customer_name"), "order_id") in calls
 
 
 def test_measure_like_columns_are_not_selected_as_determinants() -> None:
@@ -156,8 +156,46 @@ def test_measure_like_columns_are_not_selected_as_determinants() -> None:
     )
 
     assert [candidate.column_name for candidate in candidates] == [
+        "order_id",
         "ship_postal_code",
     ]
+
+
+def test_existing_group_can_absorb_singleton_through_fd_closure(monkeypatch) -> None:
+    def fake_check_column_dependency(
+        database,
+        table,
+        determinant_columns,
+        dependent_column,
+        db_manager,
+        max_violations=0,
+    ):
+        dependency = (tuple(determinant_columns), dependent_column)
+        return dependency in {
+            (("col1",), "col2"),
+            (("col1", "col2"), "col3"),
+        }
+
+    monkeypatch.setattr(
+        "inference.functional_group_builder.check_column_dependency",
+        fake_check_column_dependency,
+    )
+    profiles = [
+        make_profile("col1", uniqueness_ratio=0.2),
+        make_profile("col2", uniqueness_ratio=0.2),
+        make_profile("col3", uniqueness_ratio=0.2),
+    ]
+
+    groups = FunctionalGroupBuilder(FakeDb()).build_dependency_groups_for_table(
+        table_name="observations",
+        profiles=profiles,
+    )
+
+    assert len(groups) == 1
+    assert groups[0].determinant_columns == ("col1", "col2")
+    assert groups[0].dependent_columns == ("col3",)
+    assert groups[0].all_columns == ("col1", "col2", "col3")
+    assert groups[0].reason == "functional_dependency_closure_group"
 
 
 def test_temporal_columns_are_not_selected_as_determinants() -> None:

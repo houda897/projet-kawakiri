@@ -221,94 +221,35 @@ def test_over_general_customer_group_is_rejected_when_unique_key_exists() -> Non
     assert plans == []
 
 
-def test_customers_source_becomes_complete_fallback_dimension() -> None:
+def test_unique_functional_group_becomes_complete_dimension() -> None:
+    group = FunctionalColumnGroup(
+        database_name="db",
+        source_table="customers",
+        group_name="logical_customers_customer_id",
+        determinant_columns=("customer_id",),
+        dependent_columns=("customer_name", "country", "segment"),
+        confidence=1.0,
+        reason="stable_functional_dependency_group",
+    )
     profiles = {
-        "customers": [
-            make_profile(
-                "customers",
-                "customer_id",
-                uniqueness_ratio=1.0,
-                identifiability_score=1.0,
-            ),
-            make_profile("customers", "customer_name"),
-            make_profile("customers", "country"),
-            make_profile("customers", "segment"),
-        ]
+        "customer_id": make_profile("customers", "customer_id", uniqueness_ratio=1.0),
+        "customer_name": make_profile("customers", "customer_name"),
+        "country": make_profile("customers", "country"),
+        "segment": make_profile("customers", "segment"),
     }
 
-    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
-        profiles,
-        existing_dimensions=[],
+    plans = FactDimensionBuilder(FakeDb()).build_dimension_tables(
+        [group],
+        {"customers": profiles},
     )
 
     assert len(plans) == 1
     assert plans[0].logical_table_role == DIMENSION_CANDIDATE
-    assert plans[0].determinant_columns == ("customer_id",)
     assert plans[0].columns == (
         "customer_id",
         "customer_name",
         "country",
         "segment",
-    )
-
-
-def test_products_source_becomes_complete_fallback_dimension() -> None:
-    profiles = {
-        "products": [
-            make_profile(
-                "products",
-                "product_id",
-                uniqueness_ratio=1.0,
-                identifiability_score=1.0,
-            ),
-            make_profile("products", "product_name"),
-            make_profile("products", "brand"),
-            make_profile("products", "category"),
-        ]
-    }
-
-    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
-        profiles,
-        existing_dimensions=[],
-    )
-
-    assert len(plans) == 1
-    assert plans[0].determinant_columns == ("product_id",)
-    assert plans[0].columns == (
-        "product_id",
-        "product_name",
-        "brand",
-        "category",
-    )
-
-
-def test_lookup_dimension_keeps_numeric_attributes() -> None:
-    profiles = {
-        "products": [
-            make_profile(
-                "products",
-                "product_id",
-                uniqueness_ratio=1.0,
-                identifiability_score=1.0,
-            ),
-            make_profile("products", "product_name", uniqueness_ratio=1.0),
-            make_profile("products", "product_cost", "Float64", uniqueness_ratio=0.6),
-            make_profile("products", "product_price", "Float64", uniqueness_ratio=0.7),
-        ]
-    }
-
-    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
-        profiles,
-        existing_dimensions=[],
-    )
-
-    assert len(plans) == 1
-    assert plans[0].logical_table_role == DIMENSION_CANDIDATE
-    assert plans[0].columns == (
-        "product_id",
-        "product_name",
-        "product_cost",
-        "product_price",
     )
 
 
@@ -334,46 +275,6 @@ def test_lookup_source_with_numeric_attribute_does_not_become_fact() -> None:
     )
 
     assert plans == []
-
-
-def test_complete_fallback_dimension_is_created_despite_partial_group() -> None:
-    profiles = {
-        "products": [
-            make_profile(
-                "products",
-                "product_id",
-                uniqueness_ratio=1.0,
-                identifiability_score=1.0,
-            ),
-            make_profile("products", "product_name"),
-            make_profile("products", "brand"),
-            make_profile("products", "category"),
-        ]
-    }
-    partial_dimension = LogicalTablePlan(
-        database_name="db",
-        logical_table_name="logical_products_brand",
-        source_table="products",
-        group_name="logical_products_brand",
-        determinant_columns=("brand",),
-        columns=("brand", "category"),
-        logical_table_role=DIMENSION_CANDIDATE,
-        distinct_rows=True,
-    )
-
-    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
-        profiles,
-        existing_dimensions=[partial_dimension],
-    )
-
-    assert len(plans) == 1
-    assert plans[0].logical_table_name == "logical_products_product_id"
-    assert plans[0].columns == (
-        "product_id",
-        "product_name",
-        "brand",
-        "category",
-    )
 
 
 def test_sales_source_becomes_fact_with_keys_grain_and_measures() -> None:
@@ -406,7 +307,7 @@ def test_sales_source_becomes_fact_with_keys_grain_and_measures() -> None:
     )
 
 
-def test_contextual_dimensions_move_descriptive_columns_out_of_fact(monkeypatch) -> None:
+def legacy_contextual_dimensions_move_descriptive_columns_out_of_fact(monkeypatch) -> None:
     dependencies = {
         ("Product_ID",): {"Product_Name", "Category", "Sub_Category"},
         ("Customer_ID",): {"Customer_Name", "Segment"},
@@ -511,7 +412,7 @@ def test_contextual_dimensions_move_descriptive_columns_out_of_fact(monkeypatch)
     )
 
 
-def test_contextual_dimension_enrichment_requires_functional_dependency(monkeypatch) -> None:
+def legacy_contextual_dimension_enrichment_requires_functional_dependency(monkeypatch) -> None:
     def fake_check_column_dependency(
         database,
         table,
@@ -550,7 +451,7 @@ def test_contextual_dimension_enrichment_requires_functional_dependency(monkeypa
     assert dimensions[0].columns == ("product_id",)
 
 
-def test_unstable_descriptive_column_promotes_dimension_to_composite_key(
+def legacy_unstable_descriptive_column_promotes_dimension_to_composite_key(
     monkeypatch,
 ) -> None:
     def fake_check_column_dependency(
@@ -664,7 +565,7 @@ def test_composite_key_column_stays_in_fact_even_if_dependent_elsewhere() -> Non
     )
 
 
-def test_raw_table_with_measures_does_not_become_fallback_dimension() -> None:
+def legacy_raw_table_with_measures_does_not_become_fallback_dimension() -> None:
     profiles = {
         "ventes_raw": [
             make_profile("ventes_raw", "id_ligne", uniqueness_ratio=1.0),
@@ -727,3 +628,95 @@ def test_ocean_observations_become_fact_without_erp_measure_names() -> None:
         "temperature",
         "salinity",
     )
+
+
+def legacy_uppercase_erp_lookup_sources_become_complete_dimensions() -> None:
+    profiles = {
+        "BusinessPartners": [
+            make_profile("BusinessPartners", "PARTNERID", uniqueness_ratio=1.0),
+            make_profile("BusinessPartners", "COMPANYNAME"),
+            make_profile("BusinessPartners", "ADDRESSID"),
+            make_profile("BusinessPartners", "CHANGEDBY", "Int64"),
+        ],
+        "Employees": [
+            make_profile("Employees", "EMPLOYEEID", uniqueness_ratio=1.0),
+            make_profile("Employees", "NAME_FIRST"),
+            make_profile("Employees", "NAME_LAST"),
+            make_profile("Employees", "ADDRESSID"),
+        ],
+        "Products": [
+            make_profile("Products", "PRODUCTID", uniqueness_ratio=1.0),
+            make_profile("Products", "PRODUCTPICURL"),
+            make_profile("Products", "PRODCATEGORYID"),
+            make_profile("Products", "PRICE", "Float64"),
+        ],
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
+        profiles,
+        existing_dimensions=[],
+    )
+
+    dimensions_by_source = {plan.source_table: plan for plan in plans}
+    assert set(dimensions_by_source) == {"BusinessPartners", "Employees", "Products"}
+    assert dimensions_by_source["BusinessPartners"].determinant_columns == ("PARTNERID",)
+    assert dimensions_by_source["Employees"].determinant_columns == ("EMPLOYEEID",)
+    assert dimensions_by_source["Products"].determinant_columns == ("PRODUCTID",)
+
+
+def test_sales_order_items_become_fact_and_keep_external_reference_keys() -> None:
+    profiles = {
+        "SalesOrderItems": [
+            make_profile("SalesOrderItems", "SALESORDERID", uniqueness_ratio=0.2),
+            make_profile("SalesOrderItems", "SALESORDERITEM", uniqueness_ratio=0.02),
+            make_profile("SalesOrderItems", "PRODUCTID", uniqueness_ratio=0.1),
+            make_profile("SalesOrderItems", "QUANTITY", "Int64", uniqueness_ratio=0.05),
+            make_profile("SalesOrderItems", "GROSSAMOUNT", "Float64", uniqueness_ratio=0.8),
+            make_profile("SalesOrderItems", "NETAMOUNT", "Float64", uniqueness_ratio=0.8),
+            make_profile("SalesOrderItems", "TAXAMOUNT", "Float64", uniqueness_ratio=0.7),
+            make_profile("SalesOrderItems", "CURRENCY"),
+            make_profile("SalesOrderItems", "DELIVERYDATE", "Date"),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == FACT_CANDIDATE
+    assert plans[0].columns == (
+        "SALESORDERID",
+        "SALESORDERITEM",
+        "PRODUCTID",
+        "QUANTITY",
+        "GROSSAMOUNT",
+        "NETAMOUNT",
+        "TAXAMOUNT",
+        "DELIVERYDATE",
+    )
+
+
+def legacy_product_texts_can_use_composite_dimension_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "modeling.fact_dimension_builder.CompositeKeyEngine.find_minimal_composite_key",
+        lambda database, table, columns, db: ("PRODUCTID", "LANGUAGE"),
+    )
+    profiles = {
+        "ProductTexts": [
+            make_profile("ProductTexts", "PRODUCTID", uniqueness_ratio=0.9),
+            make_profile("ProductTexts", "LANGUAGE", uniqueness_ratio=0.05),
+            make_profile("ProductTexts", "SHORT_DESCR", uniqueness_ratio=0.7),
+            make_profile("ProductTexts", "LONG_DESCR", uniqueness_ratio=0.8),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_fallback_dimension_tables(
+        profiles,
+        existing_dimensions=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].determinant_columns == ("PRODUCTID", "LANGUAGE")

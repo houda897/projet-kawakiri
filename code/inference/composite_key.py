@@ -39,6 +39,53 @@ class CompositeKeyEngine:
         self.db = db
         self.ranking_policy = KeyRankingPolicy()
 
+    @staticmethod
+    def find_minimal_composite_key(
+        database_name: str,
+        table_name: str,
+        candidate_columns: list[str],
+        db: ClickHouseManager,
+    ) -> tuple[str, ...]:
+        """Find a unique composite key, then remove unnecessary columns."""
+        current_columns: list[str] = []
+
+        for column in dict.fromkeys(candidate_columns):
+            current_columns.append(column)
+            if len(current_columns) < 2:
+                continue
+            if not check_functional_dependency(
+                database_name,
+                table_name,
+                current_columns,
+                db,
+            ):
+                continue
+
+            changed = True
+            while changed:
+                changed = False
+                for removable_column in tuple(current_columns):
+                    reduced_columns = [
+                        candidate
+                        for candidate in current_columns
+                        if candidate != removable_column
+                    ]
+                    if len(reduced_columns) < 2:
+                        continue
+                    if check_functional_dependency(
+                        database_name,
+                        table_name,
+                        reduced_columns,
+                        db,
+                    ):
+                        current_columns = reduced_columns
+                        changed = True
+                        break
+
+            return tuple(current_columns)
+
+        return ()
+
     def generate_composite_candidates(
         self,
         tables_without_pk: list[str],
@@ -71,69 +118,37 @@ class CompositeKeyEngine:
                 reverse=True,
             )
 
-            current_combo = []
+            database_name = table_columns[0].database_name
+            evidence_by_name = {column.column_name: column for column in table_columns}
+            combo_names = self.find_minimal_composite_key(
+                database_name,
+                table,
+                [column.column_name for column in table_columns],
+                self.db,
+            )
+            if not combo_names:
+                continue
 
-            for column in table_columns:
-                current_combo.append(column)
+            current_combo = [evidence_by_name[column] for column in combo_names]
+            combo_types = tuple(column.column_type for column in current_combo)
+            logger.info("Final composite key for %s: %s\n", table, combo_names)
 
-                if len(current_combo) < 2:
-                    continue
-
-                combo_names = tuple(col.column_name for col in current_combo)
-                combo_types = tuple(col.column_type for col in current_combo)
-                database_name = current_combo[0].database_name
-
-                logger.info("Testing composite key for %s: %s", table, combo_names)
-
-                is_valid = check_functional_dependency(
-                    database_name,
-                    table,
-                    list(combo_names),
-                    self.db,
-                )
-
-                if not is_valid:
-                    continue
-
-                logger.info("Composite key found for %s: %s", table, combo_names)
-
-                cleaned_combo = list(current_combo)
-
-                columns_to_test = sorted(current_combo, key=lambda col: col.identifiability_score)
-
-                for col_to_test in columns_to_test:
-                    test_combo = [c for c in cleaned_combo if c != col_to_test]
-
-                    if len(test_combo) >= 2:
-                        test_names = [c.column_name for c in test_combo]
-
-                        if check_functional_dependency(database_name, table, test_names, self.db):
-                            cleaned_combo = test_combo
-
-                current_combo = cleaned_combo
-                combo_names = tuple(col.column_name for col in current_combo)
-                combo_types = tuple(col.column_type for col in current_combo)
-
-                logger.info("Final composite key for %s after pruning: %s\n", table, combo_names)
-
-                composite_candidates.append(
-                    self.ranking_policy.build_candidate(
-                        database_name=database_name,
-                        table_name=table,
-                        column_names=combo_names,
-                        column_types=combo_types,
-                        rows=current_combo[0].rows,
-                        null_ratio=max(col.null_ratio for col in current_combo),
-                        uniqueness_ratio=1.0,
-                        identifiability_score=sum(
-                            col.identifiability_score for col in current_combo
-                        )
-                        / len(current_combo),
-                        low_cardinality_columns=low_cardinality_columns,
+            composite_candidates.append(
+                self.ranking_policy.build_candidate(
+                    database_name=database_name,
+                    table_name=table,
+                    column_names=combo_names,
+                    column_types=combo_types,
+                    rows=current_combo[0].rows,
+                    null_ratio=max(col.null_ratio for col in current_combo),
+                    uniqueness_ratio=1.0,
+                    identifiability_score=sum(
+                        col.identifiability_score for col in current_combo
                     )
+                    / len(current_combo),
+                    low_cardinality_columns=low_cardinality_columns,
                 )
-
-                break
+            )
 
         return composite_candidates
 
