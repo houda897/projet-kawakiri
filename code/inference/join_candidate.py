@@ -244,7 +244,6 @@ class JoinEngine:
 
         jobs: list[tuple[str, str, PrimaryKeyCandidate]] = []
         for primary_key in primary_keys:
-
             target_cols = [c.strip() for c in primary_key.column_name.split(",")]
             target_types = [self._clean_type(t.strip()) for t in primary_key.column_type.split(",")]
             is_composite = len(target_cols) > 1
@@ -257,7 +256,6 @@ class JoinEngine:
                 )
                 continue
             for table_name in cols_by_table:
-
                 if table_name == primary_key.table_name:
                     continue
                 valid_source_combos = []

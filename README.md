@@ -177,3 +177,12 @@ mkdocs build --strict
 Preview it locally with `mkdocs serve`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the documentation site for further details.
+
+## Citation
+
+Academic citation metadata is provided in [CITATION.cff](CITATION.cff). The JOSS paper
+sources are available in [paper.md](paper.md) and [paper.bib](paper.bib).
+
+## License
+
+Kawakiri is distributed under the [MIT License](LICENSE).

@@ -11,7 +11,7 @@ Imagine your data model as a road network or a family tree.
 
  - Referential Integrity & Orphan Hunting: Every child must have a parent. If a sales row (Fact) points to a customer_id that does not exist in the Customer table (Dimension), this sale is an "orphan." It will float in limbo during analyses.
 
- - Topology (Cycle Detection): If table A points to B, which points to C, which points back to A, we have created an infinite roundabout. In a database, a cycle causes infinite loops during queries (recursive queries that never terminate) and makes clean data aggregation impossible to resolve.
+ - Topology (Cycle Detection): If table A points to B, which points to C, which points back to A, several join paths can describe the same relationship. Ordinary SQL joins do not recurse forever, but these cycles make the dimensional direction ambiguous and can duplicate rows or aggregates.
 
 **What the test does** : It traverses the relationship graph (adjacency matrices) to ensure that every foreign key corresponds to an existing primary key (0 orphans) and that there is no path allowing it to return to its starting point (Directed Acyclic Graph - DAG).
 
@@ -29,11 +29,11 @@ The rule requires that the intersection of their semantic spaces (with the excep
 
 $$(F \setminus K) \cap (D \setminus K) = \emptyset$$
 
-**What the test does** : It profiles the columns and proves that tables labeled as "Dimensions" have low variance and categorical types, while "Facts" are dominated by continuous, additive, and high-cardinality variables.
+**What the test does** : It excludes confirmed foreign keys and validated grain columns, then searches for incompatible evidence in the remaining attributes. Descriptive text in a fact or measure-like numeric behavior in a dimension can invalidate the separation. Statistical evidence supports this decision, but cannot by itself prove the business meaning of a column.
 
 ## Level 2 Rules (Precision): Deterministic Granularity
 
-**The Goal** : Ensure that every row in a table is unique and perfectly identified by its primary key (whether simple or composite).
+**The Goal** : Ensure that every fact row is uniquely identified by its declared grain, whether that grain is simple or composite.
 
 **Pedagogical Explanation** :
 A postal address must point to one and only one house. If the address "10 Peace Street" refers to two different buildings, the mail carrier will never know where to deliver the package.

@@ -50,8 +50,7 @@ def test_connect_creates_separate_clients_per_thread(mock_get_client) -> None:
     worker_clients = []
 
     threads = [
-        threading.Thread(target=lambda: worker_clients.append(manager.connect()))
-        for _ in range(2)
+        threading.Thread(target=lambda: worker_clients.append(manager.connect())) for _ in range(2)
     ]
 
     for thread in threads:

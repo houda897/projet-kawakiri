@@ -63,7 +63,13 @@ def make_db() -> MagicMock:
         SimpleNamespace(
             result_rows=[
                 ("sales", "raw_sales", "sales_group", "sale_id", "FACT_CANDIDATE"),
-                ("customers", "raw_customers", "customers_group", "customer_id", "DIMENSION_CANDIDATE"),
+                (
+                    "customers",
+                    "raw_customers",
+                    "customers_group",
+                    "customer_id",
+                    "DIMENSION_CANDIDATE",
+                ),
                 ("products", "raw_products", "products_group", "product_id", "DIMENSION_CANDIDATE"),
                 ("returns", "raw_returns", "returns_group", "return_id", "FACT_CANDIDATE"),
                 ("audit_logical", "audit", "audit_group", "audit_id", "DIMENSION_CANDIDATE"),
@@ -111,8 +117,7 @@ def test_build_report_returns_best_model_and_rule_summary() -> None:
     ]
     assert report["coverage"]["certified_model_tables"] == ["customers", "products", "sales"]
     assert [
-        table["logical_table_name"]
-        for table in report["coverage"]["logical_tables_outside_model"]
+        table["logical_table_name"] for table in report["coverage"]["logical_tables_outside_model"]
     ] == ["returns", "audit_logical"]
     assert report["coverage"]["uncovered_columns"] == [
         {

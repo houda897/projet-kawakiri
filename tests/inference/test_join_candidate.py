@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
 from inference.join_candidate import JoinEngine, JoinPrimaryKeyCandidate, SourceColumn
 from inference.primary_key import PrimaryKeyCandidate
 
@@ -121,3 +125,127 @@ def test_should_skip_pair_handles_nullable_type() -> None:
     pk = make_pk("items", "item_id", col_type="Int64")
 
     assert JoinEngine.should_skip_pair((source,), pk) is False
+
+
+def test_evaluate_join_to_primary_key_computes_physical_coverage() -> None:
+    db = MagicMock()
+    db.query.return_value = SimpleNamespace(result_rows=[(10, 9, 0.9)])
+    engine = JoinEngine(db)
+
+    result = engine.evaluate_join_to_primary_key(
+        source_table="sales",
+        source_column="customer_id",
+        primary_key=make_pk("customers", "customer_id"),
+        limit_rows=100,
+    )
+
+    assert result.source_non_null_rows == 10
+    assert result.matched_rows == 9
+    assert result.join_success_ratio == 0.9
+    assert "LIMIT 100" in db.query.call_args.args[0]
+
+
+def test_evaluate_join_rejects_non_unique_target() -> None:
+    engine = JoinEngine(MagicMock())
+    primary_key = make_pk("customers", "customer_id")
+    primary_key.uniqueness_ratio = 0.99
+
+    with pytest.raises(ValueError, match="strictly unique"):
+        engine.evaluate_join_to_primary_key("sales", "customer_id", primary_key)
+
+
+def test_find_primary_key_returns_exact_target_and_rejects_unknown_target() -> None:
+    engine = JoinEngine(MagicMock())
+    primary_key = make_pk("customers", "customer_id")
+
+    assert engine.find_primary_key([primary_key], "customers", "customer_id") is primary_key
+    with pytest.raises(ValueError, match="No primary-key candidate"):
+        engine.find_primary_key([primary_key], "products", "product_id")
+
+
+def test_evaluate_candidates_keeps_only_successful_join_and_sets_scope() -> None:
+    db = MagicMock()
+    engine = JoinEngine(db)
+    primary_key = make_pk("customers", "customer_id")
+    source = make_source("sales", "customer_id")
+    evaluated = JoinPrimaryKeyCandidate(
+        source_table="sales",
+        source_column="customer_id",
+        target_table="customers",
+        target_column="customer_id",
+        source_non_null_rows=10,
+        matched_rows=10,
+        join_success_ratio=1.0,
+    )
+
+    with (
+        patch.object(engine, "load_column_stats", return_value={}),
+        patch.object(engine, "prefilter_source_columns", return_value=[source]),
+        patch.object(engine, "evaluate_join_to_primary_key", return_value=evaluated),
+    ):
+        results = engine.evaluate_candidates(
+            [primary_key],
+            source_columns=[source],
+            max_workers=1,
+            analysis_scope="SOURCE",
+        )
+
+    assert results == [evaluated]
+    assert results[0].analysis_scope == "SOURCE"
+    db.close_all.assert_called_once()
+
+
+def test_prefilter_rejects_values_outside_numeric_key_domain() -> None:
+    engine = JoinEngine(MagicMock())
+    primary_key = make_pk("customers", "customer_id")
+    valid = make_source("sales", "customer_id")
+    invalid = make_source("events", "customer_id")
+    stats = {
+        ("customers", "customer_id"): {
+            "column_type": "Int64",
+            "distinct_count": 100,
+            "min_value": "1",
+            "max_value": "100",
+        },
+        ("sales", "customer_id"): {
+            "column_type": "Int64",
+            "distinct_count": 50,
+            "min_value": "1",
+            "max_value": "80",
+        },
+        ("events", "customer_id"): {
+            "column_type": "Int64",
+            "distinct_count": 50,
+            "min_value": "1",
+            "max_value": "500",
+        },
+    }
+
+    kept = engine.prefilter_source_columns([primary_key], [valid, invalid], stats)
+
+    assert kept == [valid]
+
+
+def test_store_and_load_join_candidates_preserves_analysis_scope() -> None:
+    db = MagicMock()
+    engine = JoinEngine(db)
+    candidate = JoinPrimaryKeyCandidate(
+        source_table="sales",
+        source_column="customer_id",
+        target_table="customers",
+        target_column="customer_id",
+        source_non_null_rows=10,
+        matched_rows=10,
+        join_success_ratio=1.0,
+        analysis_scope="SOURCE",
+    )
+
+    engine.store_candidates([candidate], clear_existing=False)
+
+    db.insert.assert_called_once()
+    db.query.return_value = SimpleNamespace(
+        result_rows=[("sales", "customer_id", "customers", "customer_id", 10, 10, 1.0, "SOURCE")]
+    )
+    loaded = engine.load_candidates("SOURCE")
+
+    assert loaded == [candidate]

@@ -25,7 +25,7 @@ nav:
   - API Reference:
       - English: API_doc.md
       - Français: API_doc_fr.md
-  - Research Paper: paper.md
+  - Release checklist: release-checklist.md
 
 markdown_extensions:
   - admonition
