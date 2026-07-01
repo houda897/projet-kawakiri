@@ -19,8 +19,9 @@ review or prove that the inferred model is the only possible business interpreta
 CSV ingestion
 -> raw column profiling and statistics
 -> identifiability scoring
+-> preliminary source keys and relationships
 -> functional column grouping
--> logical fact/dimension materialization
+-> logical fact/dimension materialization, with unresolved sources kept neutral
 -> logical-table profiling
 -> primary-key and join inference
 -> adjacency graph and table roles
@@ -33,7 +34,9 @@ CSV ingestion
 Functional groups are based on verified dependencies. A group may be extended only
 when its current columns functionally determine an unassigned column. Columns without
 such evidence remain singletons in the grouping metadata; they are not silently added
-to a dimension.
+to a dimension. Referenced, already-normalized sources are kept as coherent entities,
+while groups extracted from flat tables must demonstrate repeated determinant values
+and a real compression gain.
 
 ## Validation rules
 
@@ -43,6 +46,7 @@ Kawakiri currently checks:
 - referential integrity and orphan values;
 - graph topology, including cycles and invalid fact-to-fact edges;
 - deterministic fact granularity;
+- minimality of the fact grain and model coverage;
 - semantic separation between facts and dimensions;
 - aggregation stability across inferred joins.
 
@@ -53,7 +57,7 @@ Kawakiri currently checks:
 | Ingestion | `CsvIngestionEngine` | Detect encoding, delimiter and types; import CSV rows |
 | Profiling | `ProfileEngine`, `compute_column_stats` | Compute cardinality, null ratio, entropy and numeric statistics |
 | Grouping | `FunctionalGroupBuilder` | Build non-overlapping functional column groups |
-| Logical modeling | `FactDimensionBuilder`, `LogicalTableBuilder` | Classify proven groups and materialize logical tables |
+| Logical modeling | `FactDimensionBuilder`, `LogicalTableBuilder` | Classify proven groups, preserve unresolved sources, and materialize logical tables |
 | Inference | `PrimaryKeyEngine`, `JoinEngine`, `AdjacencyMatrixEngine`, `TableRoleEngine` | Infer keys, joins, graph edges and roles |
 | Modeling | `DecisionModelCandidateBuilder`, `ModelRanking` | Build and rank dimensional-model candidates |
 | Validation | Structural, granularity, semantic and aggregation validators | Apply the conformity rules |
@@ -83,7 +87,6 @@ CH_PORT=your_port
 CH_DATABASE=your_database
 CH_USER=your_user
 META_DB=your_metadata_database
-CH_USER=default
 CH_PASSWORD=your_password
 ```
 
@@ -115,6 +118,8 @@ The command creates:
 kawakiri ingest-folder path/to/csv-folder
 kawakiri profile-basic
 kawakiri score-identifiability
+kawakiri infer-source-keys
+kawakiri infer-source-joins
 kawakiri infer-functional-groups
 kawakiri build-logical-tables
 kawakiri profile-logical-tables

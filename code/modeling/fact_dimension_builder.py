@@ -3,30 +3,27 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from core.clickhouse_manager import CH_DB, ClickHouseManager
 from core.naming import (
-    belongs_to_key_concept,
     is_descriptive_candidate,
     is_grain_candidate,
     is_grain_like_column,
     is_key_like_column,
-    is_location_like_column,
     is_lookup_key_candidate,
     is_measure_candidate,
-    is_temporal_like_column,
 )
 from inference.functional_group_builder import (
     FunctionalColumnGroup,
     FunctionalColumnProfile,
     FunctionalGroupBuilder,
 )
-from stats.functional_dependency import check_column_dependency
+from inference.source_structure import SourceStructureAnalyzer, SourceTableStructure
 
 DIMENSION_CANDIDATE = "DIMENSION_CANDIDATE"
 FACT_CANDIDATE = "FACT_CANDIDATE"
-SINGLETON = "SINGLETON"
+UNKNOWN_CANDIDATE = "UNKNOWN_CANDIDATE"
 
 
 @dataclass(frozen=True)
@@ -57,39 +54,27 @@ class FactDimensionBuilder:
             table_name: {profile.column_name: profile for profile in profiles}
             for table_name, profiles in profiles_by_table.items()
         }
+        source_structures = SourceStructureAnalyzer(self.db).load_structures()
 
         dimension_plans = self.build_dimension_tables(
             groups,
             profiles_by_table_and_column,
-        )
-        dimension_plans.extend(
-            self.build_fallback_dimension_tables(
-                profiles_by_table,
-                dimension_plans,
-            )
-        )
-        dimension_plans.extend(
-            self.build_contextual_dimension_tables(
-                profiles_by_table,
-                dimension_plans,
-            )
-        )
-        dimension_plans = self.enrich_dimension_tables(
-            dimension_plans,
-            profiles_by_table,
-        )
-        dimension_plans = self.promote_composite_dimension_keys(
-            dimension_plans,
-            profiles_by_table,
+            source_structures,
         )
         fact_plans = self.build_fact_tables(
             groups,
             profiles_by_table,
             dimension_plans,
+            source_structures,
+        )
+        unknown_plans = self.build_unknown_tables(
+            profiles_by_table,
+            dimension_plans + fact_plans,
+            source_structures,
         )
 
         return sorted(
-            dimension_plans + fact_plans,
+            dimension_plans + fact_plans + unknown_plans,
             key=lambda plan: (plan.source_table, plan.logical_table_role, plan.logical_table_name),
         )
 
@@ -97,12 +82,18 @@ class FactDimensionBuilder:
         self,
         groups: list[FunctionalColumnGroup],
         profiles_by_table_and_column: Mapping[str, Mapping[str, FunctionalColumnProfile]],
+        source_structures: Mapping[str, SourceTableStructure] | None = None,
     ) -> list[LogicalTablePlan]:
+        source_structures = source_structures or {}
         dimensions = []
 
         for group in groups:
             source_profiles = profiles_by_table_and_column.get(group.source_table, {})
-            if not self.is_dimension_group(group, source_profiles):
+            if not self.is_dimension_group(
+                group,
+                source_profiles,
+                source_structures.get(group.source_table),
+            ):
                 continue
 
             dimensions.append(
@@ -120,236 +111,40 @@ class FactDimensionBuilder:
 
         return dimensions
 
-    def enrich_dimension_tables(
-        self,
-        dimension_plans: list[LogicalTablePlan],
-        profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
-    ) -> list[LogicalTablePlan]:
-        enriched = []
-
-        for dimension in dimension_plans:
-            source_profiles = profiles_by_table.get(dimension.source_table, [])
-            columns = list(dimension.columns)
-
-            for profile in source_profiles:
-                if profile.column_name in columns:
-                    continue
-                if self.is_invalid_dimension_dependent(profile.column_name):
-                    continue
-                if not is_descriptive_candidate(profile):
-                    continue
-                if self.is_contextual_dependent_for_dimension(
-                    dimension.determinant_columns,
-                    profile.column_name,
-                ) and self.is_stable_dimension_dependent(
-                    dimension.source_table,
-                    dimension.determinant_columns,
-                    profile.column_name,
-                ):
-                    columns.append(profile.column_name)
-
-            enriched.append(replace(dimension, columns=tuple(columns)))
-
-        return enriched
-
-    def promote_composite_dimension_keys(
-        self,
-        dimension_plans: list[LogicalTablePlan],
-        profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
-    ) -> list[LogicalTablePlan]:
-        promoted = []
-
-        for dimension in dimension_plans:
-            source_profiles = profiles_by_table.get(dimension.source_table, [])
-            profiles_by_name = {profile.column_name: profile for profile in source_profiles}
-            promoted_dimension = dimension
-
-            if len(dimension.determinant_columns) == 1:
-                for profile in source_profiles:
-                    if profile.column_name in dimension.columns:
-                        continue
-                    if not is_descriptive_candidate(profile):
-                        continue
-                    if not self.is_contextual_dependent_for_dimension(
-                        dimension.determinant_columns,
-                        profile.column_name,
-                    ):
-                        continue
-
-                    candidate_determinants = (
-                        *dimension.determinant_columns,
-                        profile.column_name,
-                    )
-                    dependent_columns = tuple(
-                        column
-                        for column in dimension.columns
-                        if column not in dimension.determinant_columns
-                    )
-                    if not dependent_columns:
-                        continue
-                    if not all(
-                        self.is_stable_dimension_dependent(
-                            dimension.source_table,
-                            candidate_determinants,
-                            dependent,
-                        )
-                        for dependent in dependent_columns
-                    ):
-                        continue
-
-                    columns = candidate_determinants + tuple(
-                        column
-                        for column in dependent_columns
-                        if column in profiles_by_name
-                    )
-                    table_name = self.make_dimension_table_name(
-                        dimension.source_table,
-                        "_".join(candidate_determinants),
-                    )
-                    promoted_dimension = replace(
-                        dimension,
-                        logical_table_name=table_name,
-                        group_name=table_name,
-                        determinant_columns=candidate_determinants,
-                        columns=columns,
-                    )
-                    break
-
-            promoted.append(promoted_dimension)
-
-        return promoted
-
-    def build_contextual_dimension_tables(
-        self,
-        profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
-        existing_dimensions: list[LogicalTablePlan],
-    ) -> list[LogicalTablePlan]:
-        existing_dimension_keys = {
-            (dimension.source_table, dimension.determinant_columns)
-            for dimension in existing_dimensions
-        }
-        contextual_dimensions = []
-
-        for source_table, profiles in profiles_by_table.items():
-            profiles_by_name = {profile.column_name: profile for profile in profiles}
-            for key_profile in self.select_contextual_dimension_key_profiles(profiles):
-                determinant_columns = (key_profile.column_name,)
-                if (source_table, determinant_columns) in existing_dimension_keys:
-                    continue
-
-                dependents = [
-                    profile.column_name
-                    for profile in profiles
-                    if profile.column_name != key_profile.column_name
-                    and not self.is_invalid_dimension_dependent(profile.column_name)
-                    and is_descriptive_candidate(profile)
-                    and self.is_contextual_dependent_for_dimension(
-                        determinant_columns,
-                        profile.column_name,
-                    )
-                    and self.is_stable_dimension_dependent(
-                        source_table,
-                        determinant_columns,
-                        profile.column_name,
-                    )
-                ]
-                if not dependents:
-                    continue
-
-                columns = determinant_columns + tuple(
-                    column
-                    for column in dependents
-                    if column in profiles_by_name
-                )
-                table_name = self.make_dimension_table_name(
-                    source_table,
-                    key_profile.column_name,
-                )
-                contextual_dimensions.append(
-                    LogicalTablePlan(
-                        database_name=CH_DB,
-                        logical_table_name=table_name,
-                        source_table=source_table,
-                        group_name=table_name,
-                        determinant_columns=determinant_columns,
-                        columns=columns,
-                        logical_table_role=DIMENSION_CANDIDATE,
-                        distinct_rows=True,
-                    )
-                )
-                existing_dimension_keys.add((source_table, determinant_columns))
-
-        return contextual_dimensions
-
-    def build_fallback_dimension_tables(
-        self,
-        profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
-        existing_dimensions: list[LogicalTablePlan],
-    ) -> list[LogicalTablePlan]:
-        existing_dimension_keys = {
-            (dimension.source_table, dimension.determinant_columns)
-            for dimension in existing_dimensions
-        }
-        fallback_dimensions = []
-
-        for source_table, profiles in profiles_by_table.items():
-            if not self.is_descriptive_source_table(source_table, profiles):
-                continue
-
-            key_profile = self.select_dimension_key_profile(profiles)
-            if key_profile is None:
-                continue
-            determinant_columns = (key_profile.column_name,)
-            if (source_table, determinant_columns) in existing_dimension_keys:
-                continue
-
-            columns = self.select_complete_dimension_columns(
-                profiles,
-                key_profile.column_name,
-            )
-            if len(columns) <= 1:
-                continue
-
-            fallback_dimensions.append(
-                LogicalTablePlan(
-                    database_name=CH_DB,
-                    logical_table_name=self.make_dimension_table_name(
-                        source_table,
-                        key_profile.column_name,
-                    ),
-                    source_table=source_table,
-                    group_name=self.make_dimension_table_name(
-                        source_table,
-                        key_profile.column_name,
-                    ),
-                    determinant_columns=determinant_columns,
-                    columns=columns,
-                    logical_table_role=DIMENSION_CANDIDATE,
-                    distinct_rows=True,
-                )
-            )
-            existing_dimension_keys.add((source_table, determinant_columns))
-
-        return fallback_dimensions
-
     def build_fact_tables(
         self,
         groups: list[FunctionalColumnGroup],
         profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
         dimension_plans: list[LogicalTablePlan],
+        source_structures: Mapping[str, SourceTableStructure] | None = None,
     ) -> list[LogicalTablePlan]:
+        source_structures = source_structures or {}
         dimensions_by_source: dict[str, list[LogicalTablePlan]] = defaultdict(list)
         for dimension in dimension_plans:
             dimensions_by_source[dimension.source_table].append(dimension)
 
         facts = []
+        multi_table_source = len(profiles_by_table) > 1
         for source_table, profiles in profiles_by_table.items():
-            if (
-                self.is_descriptive_source_table(source_table, profiles)
-                and not dimensions_by_source.get(source_table)
+            source_structure = source_structures.get(source_table)
+            source_columns = {profile.column_name for profile in profiles}
+            if any(
+                set(dimension.columns) == source_columns
+                for dimension in dimensions_by_source.get(source_table, [])
             ):
                 continue
-            if not self.is_transactional_source_table(source_table, profiles):
+            if (
+                multi_table_source
+                and source_structures
+                and not dimensions_by_source.get(source_table)
+                and (source_structure is None or source_structure.outgoing_count == 0)
+            ):
+                continue
+            if not self.is_transactional_source_table(
+                source_table,
+                profiles,
+                source_structure=source_structure,
+            ):
                 continue
 
             dimension_dependent_columns = {
@@ -363,6 +158,20 @@ class FactDimensionBuilder:
                 for dimension in dimensions_by_source.get(source_table, [])
                 for column in dimension.determinant_columns
             }
+            dimension_key_columns.update(
+                profile.column_name
+                for profile in profiles
+                if is_key_like_column(profile.column_name) or is_lookup_key_candidate(profile)
+            )
+            if source_structure and source_structure.entity_key:
+                dimension_key_columns.update(
+                    self.split_columns(source_structure.entity_key.column_name)
+                )
+                dimension_key_columns.update(
+                    column
+                    for relationship in source_structure.outgoing_relationships
+                    for column in self.split_columns(relationship.source_column)
+                )
             fact_columns = self.select_fact_columns(
                 profiles,
                 dimension_dependent_columns,
@@ -373,6 +182,7 @@ class FactDimensionBuilder:
                 fact_columns,
                 profiles,
                 dimension_key_columns,
+                source_structure=source_structure,
             ):
                 continue
 
@@ -390,6 +200,41 @@ class FactDimensionBuilder:
             )
 
         return facts
+
+    def build_unknown_tables(
+        self,
+        profiles_by_table: Mapping[str, Sequence[FunctionalColumnProfile]],
+        existing_plans: list[LogicalTablePlan],
+        source_structures: Mapping[str, SourceTableStructure] | None = None,
+    ) -> list[LogicalTablePlan]:
+        """Keep unresolved sources observable without forcing a fact/dimension role."""
+        source_structures = source_structures or {}
+        planned_sources = {plan.source_table for plan in existing_plans}
+        unknown_plans = []
+
+        for source_table, profiles in profiles_by_table.items():
+            if source_table in planned_sources or not profiles:
+                continue
+            structure = source_structures.get(source_table)
+            determinants = ()
+            if structure and structure.entity_key:
+                determinants = self.split_columns(structure.entity_key.column_name)
+            cleaned_table = re.sub(r"[^0-9A-Za-z_]+", "_", source_table).strip("_").lower()
+            table_name = f"logical_{cleaned_table}_unclassified"
+            unknown_plans.append(
+                LogicalTablePlan(
+                    database_name=CH_DB,
+                    logical_table_name=table_name,
+                    source_table=source_table,
+                    group_name=table_name,
+                    determinant_columns=determinants,
+                    columns=tuple(profile.column_name for profile in profiles),
+                    logical_table_role=UNKNOWN_CANDIDATE,
+                    distinct_rows=False,
+                )
+            )
+
+        return unknown_plans
 
     def select_fact_columns(
         self,
@@ -414,67 +259,40 @@ class FactDimensionBuilder:
         return fact_columns
 
     @staticmethod
-    def select_contextual_dimension_key_profiles(
-        profiles: Sequence[FunctionalColumnProfile],
-    ) -> list[FunctionalColumnProfile]:
-        candidates = [
-            profile
-            for profile in profiles
-            if profile.null_ratio <= 0.05
-            and 0.01 <= profile.uniqueness_ratio < 0.95
-            and is_lookup_key_candidate(profile)
-            and not is_grain_like_column(profile.column_name)
-            and not is_temporal_like_column(profile.column_name)
-        ]
-        candidates.sort(
-            key=lambda profile: (
-                is_location_like_column(profile.column_name),
-                profile.identifiability_score,
-                profile.uniqueness_ratio,
-            ),
-            reverse=True,
-        )
-        return candidates
-
-    @staticmethod
-    def is_contextual_dependent_for_dimension(
-        determinant_columns: tuple[str, ...],
-        dependent_column: str,
-    ) -> bool:
-        if any(
-            belongs_to_key_concept(column, dependent_column)
-            for column in determinant_columns
-        ):
-            return True
-
-        return any(
-            is_location_like_column(column) for column in determinant_columns
-        ) and is_location_like_column(dependent_column)
-
-    @staticmethod
     def is_dimension_group(
         group: FunctionalColumnGroup,
         source_profiles: Mapping[str, FunctionalColumnProfile],
+        source_structure: SourceTableStructure | None = None,
     ) -> bool:
         if not group.dependent_columns:
             return False
+
+        if group.group_role == "NORMALIZED_ENTITY":
+            if source_structure is None or source_structure.entity_key is None:
+                return False
+            return not FactDimensionBuilder.has_strong_transaction_signal(
+                list(source_profiles.values()),
+                source_structure=source_structure,
+            )
 
         determinant_profiles = [
             source_profiles[column]
             for column in group.determinant_columns
             if column in source_profiles
         ]
-        if determinant_profiles and all(
-            profile.uniqueness_ratio >= 0.95 for profile in determinant_profiles
-        ):
+        if any(is_grain_like_column(profile.column_name) for profile in determinant_profiles):
             return False
+        if determinant_profiles and all(
+            profile.uniqueness_ratio >= 0.999999 for profile in determinant_profiles
+        ):
+            return not FactDimensionBuilder.has_strong_transaction_signal(
+                list(source_profiles.values()),
+                source_structure=source_structure,
+            )
 
         if (
             determinant_profiles
-            and not any(
-                is_key_like_column(profile.column_name)
-                for profile in determinant_profiles
-            )
+            and not any(is_key_like_column(profile.column_name) for profile in determinant_profiles)
             and FactDimensionBuilder.has_unique_key_profile(source_profiles.values())
         ):
             return False
@@ -507,6 +325,7 @@ class FactDimensionBuilder:
         fact_columns: list[str],
         profiles: Sequence[FunctionalColumnProfile],
         dimension_key_columns: set[str],
+        source_structure: SourceTableStructure | None = None,
     ) -> bool:
         profiles_by_name = {profile.column_name: profile for profile in profiles}
         measure_columns = []
@@ -523,21 +342,26 @@ class FactDimensionBuilder:
             if FactDimensionBuilder.is_grain_signal_column(column, profile):
                 grain_columns.add(column)
 
-        return bool(measure_columns) and bool(grain_columns)
+        if measure_columns and grain_columns:
+            return True
+        if source_structure is None or source_structure.entity_key is None:
+            return False
+        entity_key_columns = FactDimensionBuilder.split_columns(
+            source_structure.entity_key.column_name
+        )
+        return (
+            len(entity_key_columns) > 1
+            and source_structure.outgoing_count >= 2
+            and bool(grain_columns)
+        )
 
     @staticmethod
     def is_transactional_source_table(
         source_table: str,
         profiles: Sequence[FunctionalColumnProfile],
+        source_structure: SourceTableStructure | None = None,
     ) -> bool:
-        measure_columns = [
-            profile
-            for profile in profiles
-            if is_measure_candidate(profile)
-        ]
-        if not measure_columns:
-            return False
-
+        measure_columns = [profile for profile in profiles if is_measure_candidate(profile)]
         grain_columns = [
             profile
             for profile in profiles
@@ -546,7 +370,19 @@ class FactDimensionBuilder:
                 profile,
             )
         ]
-        if not grain_columns:
+        if source_structure and source_structure.entity_key:
+            entity_key_columns = FactDimensionBuilder.split_columns(
+                source_structure.entity_key.column_name
+            )
+            has_composite_event_grain = len(entity_key_columns) > 1
+            if source_structure.outgoing_count > 0 and measure_columns and grain_columns:
+                return True
+            if source_structure.outgoing_count >= 2 and has_composite_event_grain and grain_columns:
+                return True
+            if source_structure.incoming_count > 0:
+                return False
+
+        if not measure_columns or not grain_columns:
             return False
 
         descriptive_columns = [
@@ -560,175 +396,53 @@ class FactDimensionBuilder:
         ]
 
         if (
-            len(grain_columns) == 1
+            (
+                source_structure is None
+                or (
+                    source_structure.incoming_count == 0
+                    and source_structure.outgoing_count == 0
+                )
+            )
+            and len(grain_columns) == 1
             and grain_columns[0].uniqueness_ratio >= 0.95
             and descriptive_columns
+            and len(measure_columns) <= len(descriptive_columns)
         ):
             return False
 
-        return len(descriptive_columns) <= len(grain_columns) + len(measure_columns)
+        return True
 
     @staticmethod
-    def is_descriptive_source_table(
-        source_table: str,
+    def has_strong_transaction_signal(
         profiles: Sequence[FunctionalColumnProfile],
+        source_structure: SourceTableStructure | None = None,
     ) -> bool:
-        key_profile = FactDimensionBuilder.select_dimension_key_profile(profiles)
-        if key_profile is None:
-            return False
-
-        measure_columns = [
-            profile
-            for profile in profiles
-            if profile.column_name != key_profile.column_name
-            and is_measure_candidate(profile)
-        ]
-        other_grain_columns = [
-            profile
-            for profile in profiles
-            if profile.column_name != key_profile.column_name
-            and FactDimensionBuilder.is_grain_signal_column(
-                profile.column_name,
-                profile,
-            )
-        ]
-
-        # A clean lookup can have numeric attributes, but a table with measures
-        # and several non-key grain columns is an event table, not a dimension.
-        if measure_columns and len(other_grain_columns) >= 2:
-            return False
-
-        if FactDimensionBuilder.has_lookup_attribute_columns(
-            profiles,
-            key_profile.column_name,
-        ):
-            return True
-
-        if FactDimensionBuilder.is_transactional_source_table(source_table, profiles):
-            return False
-
-        grain_columns = [
+        """Detect event evidence without requiring domain-specific measure names."""
+        measures = [profile for profile in profiles if is_measure_candidate(profile)]
+        repeated_grain_columns = [
             profile
             for profile in profiles
             if FactDimensionBuilder.is_grain_signal_column(
                 profile.column_name,
                 profile,
             )
+            and (profile.uniqueness_ratio < 0.95 or is_grain_like_column(profile.column_name))
         ]
-        descriptive_columns = [
-            profile
-            for profile in profiles
-            if profile.column_name != key_profile.column_name
-            and not is_measure_candidate(profile)
-            and not FactDimensionBuilder.is_grain_signal_column(
-                profile.column_name,
-                profile,
+        if source_structure and source_structure.entity_key:
+            entity_key_columns = FactDimensionBuilder.split_columns(
+                source_structure.entity_key.column_name
             )
-        ]
+            if source_structure.outgoing_count > 0 and measures:
+                has_temporal_column = any(
+                    "Date" in profile.column_type or "Time" in profile.column_type
+                    for profile in profiles
+                )
+                if len(entity_key_columns) > 1 or has_temporal_column:
+                    return True
+            if source_structure.outgoing_count >= 2 and len(entity_key_columns) > 1:
+                return True
 
-        if not descriptive_columns:
-            return False
-
-        if len(grain_columns) > 1:
-            return False
-
-        return len(measure_columns) <= max(1, len(descriptive_columns))
-
-    @staticmethod
-    def has_lookup_attribute_columns(
-        profiles: Sequence[FunctionalColumnProfile],
-        key_column: str,
-    ) -> bool:
-        """
-        Return True when a source has a unique key plus dimension attributes.
-
-        In already-normalized lookup tables, attributes such as ProductName or
-        ProductPrice can be unique or numeric. They still describe the key; they
-        should not make the source look like a transaction fact.
-        """
-
-        return any(
-            FactDimensionBuilder.is_fallback_dimension_attribute(profile, key_column)
-            for profile in profiles
-        )
-
-    @staticmethod
-    def is_fallback_dimension_attribute(
-        profile: FunctionalColumnProfile,
-        key_column: str,
-    ) -> bool:
-        """
-        Detect an attribute for a complete fallback dimension.
-
-        This deliberately differs from is_descriptive_candidate: fallback
-        dimensions represent source tables that are already clean lookup tables,
-        so unique names and numeric properties are allowed as attributes.
-        """
-
-        if profile.column_name == key_column:
-            return False
-        if is_grain_like_column(profile.column_name):
-            return False
-        return True
-
-    @staticmethod
-    def select_complete_dimension_columns(
-        profiles: Sequence[FunctionalColumnProfile],
-        key_column: str,
-    ) -> tuple[str, ...]:
-        columns = []
-
-        for profile in profiles:
-            if profile.column_name == key_column:
-                columns.append(profile.column_name)
-                continue
-            if not FactDimensionBuilder.is_fallback_dimension_attribute(
-                profile,
-                key_column,
-            ):
-                continue
-            columns.append(profile.column_name)
-
-        return tuple(columns)
-
-    def is_stable_dimension_dependent(
-        self,
-        source_table: str,
-        determinant_columns: tuple[str, ...],
-        dependent_column: str,
-    ) -> bool:
-        return check_column_dependency(
-            database=CH_DB,
-            table=source_table,
-            determinant_columns=list(determinant_columns),
-            dependent_column=dependent_column,
-            db_manager=self.db,
-        )
-
-    @staticmethod
-    def select_dimension_key_profile(
-        profiles: Sequence[FunctionalColumnProfile],
-    ) -> FunctionalColumnProfile | None:
-        candidates = [
-            profile
-            for profile in profiles
-            if profile.null_ratio <= 0.05
-            and profile.uniqueness_ratio >= 0.95
-            and is_key_like_column(profile.column_name)
-            and not is_measure_candidate(profile)
-        ]
-        if not candidates:
-            return None
-
-        candidates.sort(
-            key=lambda profile: (
-                profile.identifiability_score,
-                profile.uniqueness_ratio,
-                -len(profile.column_name),
-            ),
-            reverse=True,
-        )
-        return candidates[0]
+        return bool(measures) and len(repeated_grain_columns) >= 2
 
     @staticmethod
     def is_invalid_dimension_dependent(column_name: str) -> bool:
@@ -751,7 +465,5 @@ class FactDimensionBuilder:
         return f"logical_{cleaned_table}_fact"
 
     @staticmethod
-    def make_dimension_table_name(source_table: str, key_column: str) -> str:
-        cleaned_table = re.sub(r"[^0-9A-Za-z_]+", "_", source_table).strip("_").lower()
-        cleaned_key = re.sub(r"[^0-9A-Za-z_]+", "_", key_column).strip("_").lower()
-        return f"logical_{cleaned_table}_{cleaned_key}"
+    def split_columns(columns: str) -> tuple[str, ...]:
+        return tuple(column.strip() for column in columns.split(",") if column.strip())

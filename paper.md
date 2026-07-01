@@ -99,6 +99,7 @@ monolithic inference step:
 -> ingestion 
 -> profiling 
 -> identifiability scoring 
+-> preliminary source-key and relationship inference
 -> functional-dependency grouping
 -> logical fact/dimension materialization
 -> logical-table profiling

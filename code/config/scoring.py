@@ -56,6 +56,7 @@ PARSIMONY_WEIGHTS = {
     # Bonus for galaxy schema
     "fact_coverage_bonus": 15.0,  # Reward if the model unify multple fact tables
     "shared_dimension_bonus": 10.0,  # Reward for shared dimension between multiples fact tables
+    "model_coverage_reward": 30.0,  # Reward proportional to covered inferred facts
 }
 
 SEMANTIC_HOMOGENEITY_WEIGHTS = {

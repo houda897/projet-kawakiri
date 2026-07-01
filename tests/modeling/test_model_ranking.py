@@ -32,6 +32,7 @@ class TestModelRanking(unittest.TestCase):
             "dimension_reward": 5.0,
             "fact_coverage_bonus": 10.0,
             "shared_dimension_bonus": 2.0,
+            "model_coverage_reward": 0.0,
         },
     )
     def test_calculate_score_star_schema(self):
@@ -52,6 +53,7 @@ class TestModelRanking(unittest.TestCase):
             "dimension_reward": 5.0,
             "fact_coverage_bonus": 10.0,
             "shared_dimension_bonus": 2.0,
+            "model_coverage_reward": 0.0,
         },
     )
     def test_calculate_score_constellation(self):
@@ -90,5 +92,6 @@ class TestModelRanking(unittest.TestCase):
             "model_id",
             "parsimony_score",
             "normalized_score",
+            "coverage_score",
         ]
         mock_clear.assert_called()

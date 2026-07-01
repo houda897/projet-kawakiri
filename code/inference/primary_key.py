@@ -29,6 +29,8 @@ class PrimaryKeyCandidate:
     identifiability_score: float
     confidence: float
     reason: str
+    analysis_scope: str = "LOGICAL"
+    is_official: bool = True
 
 
 class PrimaryKeyEngine:
@@ -47,15 +49,25 @@ class PrimaryKeyEngine:
 
     def infer_candidates(
         self,
-        threshold: float = 0.99,
+        threshold: float = 0.999999999,
+        *,
+        table_names: set[str] | None = None,
+        select_best: bool = True,
+        analysis_scope: str = "LOGICAL",
     ) -> list[PrimaryKeyCandidate]:
         """
         Infer official primary-key candidates, including composite keys when needed.
         """
 
-        simple_candidates = self.infer_ranked_simple_candidates(threshold=threshold)
+        simple_candidates = self.infer_ranked_simple_candidates(
+            threshold=threshold,
+            table_names=table_names,
+        )
 
-        tables_without_pk = self.find_tables_without_candidates(simple_candidates)
+        tables_without_pk = self.find_tables_without_candidates(
+            simple_candidates,
+            table_names=table_names,
+        )
 
         low_cardinality_columns = self.low_cardinality_analyzer.to_column_name_set(
             self.low_cardinality_analyzer.find_columns()
@@ -66,23 +78,37 @@ class PrimaryKeyEngine:
             low_cardinality_columns=low_cardinality_columns,
         )
 
-        logical_table_candidates = self.infer_logical_table_key_candidates(
-            threshold=threshold,
-            low_cardinality_columns=low_cardinality_columns,
-        )
+        logical_table_candidates = []
+        if analysis_scope == "LOGICAL":
+            logical_table_candidates = self.infer_logical_table_key_candidates(
+                threshold=threshold,
+                low_cardinality_columns=low_cardinality_columns,
+            )
 
         all_candidates = simple_candidates + composite_candidates + logical_table_candidates
-        best_by_table = self.ranking_policy.select_best_by_table(all_candidates)
-        best_by_table = self.apply_logical_table_key_overrides(
-            best_by_table,
-            logical_table_candidates,
-        )
+        if select_best:
+            best_by_table = self.ranking_policy.select_best_by_table(all_candidates)
+            best_by_table = self.apply_logical_table_key_overrides(
+                best_by_table,
+                logical_table_candidates,
+            )
+            selected = list(best_by_table.values())
+        else:
+            selected = self.ranking_policy.rank(all_candidates)
 
-        return [self.to_primary_key_candidate(candidate) for candidate in best_by_table.values()]
+        return [
+            self.to_primary_key_candidate(
+                candidate,
+                analysis_scope=analysis_scope,
+                is_official=select_best,
+            )
+            for candidate in selected
+        ]
 
     def infer_ranked_simple_candidates(
         self,
-        threshold: float = 0.99,
+        threshold: float = 0.999999999,
+        table_names: set[str] | None = None,
     ) -> list[RankedKeyCandidate]:
         """
         Build ranked simple-key candidates from metadata.
@@ -109,7 +135,7 @@ class PrimaryKeyEngine:
            AND p.column_name = i.column_name
         WHERE p.database_name = %(database)s
           AND p.uniqueness_ratio >= %(threshold)s
-          AND p.null_ratio <= 0.000001
+          AND p.null_rows = 0
           AND NOT startsWith(p.column_name, '__')
         ORDER BY p.table_name, p.column_name
         """
@@ -122,19 +148,27 @@ class PrimaryKeyEngine:
         candidates = []
 
         for row in rows:
-            candidates.append(
-                self.ranking_policy.build_candidate(
-                    database_name=row[0],
-                    table_name=row[1],
-                    column_names=(row[2],),
-                    column_types=(row[3],),
-                    rows=row[4],
-                    null_ratio=row[5],
-                    uniqueness_ratio=row[6],
-                    identifiability_score=row[7],
-                    low_cardinality_columns=low_cardinality_columns,
-                )
+            if table_names is not None and row[1] not in table_names:
+                continue
+            rows_count, null_ratio, uniqueness_ratio = self.compute_key_shape(
+                row[1],
+                (row[2],),
             )
+            if rows_count <= 0 or null_ratio != 0.0 or uniqueness_ratio != 1.0:
+                continue
+            candidate = self.ranking_policy.build_candidate(
+                database_name=row[0],
+                table_name=row[1],
+                column_names=(row[2],),
+                column_types=(row[3],),
+                rows=rows_count,
+                null_ratio=null_ratio,
+                uniqueness_ratio=uniqueness_ratio,
+                identifiability_score=row[7],
+                low_cardinality_columns=low_cardinality_columns,
+            )
+            if candidate.measure_like_column_count == 0:
+                candidates.append(candidate)
 
         return self.ranking_policy.rank(candidates)
 
@@ -181,7 +215,7 @@ class PrimaryKeyEngine:
             )
             if rows_count <= 0:
                 continue
-            if null_ratio > 0.000001 or uniqueness_ratio < threshold:
+            if null_ratio != 0.0 or uniqueness_ratio != 1.0:
                 continue
 
             candidates.append(
@@ -240,9 +274,7 @@ class PrimaryKeyEngine:
         Compute completeness and uniqueness for a determinant tuple.
         """
 
-        null_checks = " OR ".join(
-            f"isNull({q_ident(column_name)})" for column_name in column_names
-        )
+        null_checks = " OR ".join(f"isNull({q_ident(column_name)})" for column_name in column_names)
         tuple_expression = ", ".join(q_ident(column_name) for column_name in column_names)
 
         sql = f"""
@@ -306,6 +338,7 @@ class PrimaryKeyEngine:
     def find_tables_without_candidates(
         self,
         candidates: list[RankedKeyCandidate],
+        table_names: set[str] | None = None,
     ) -> list[str]:
         """
         Find tables that do not already have a simple primary-key candidate.
@@ -322,6 +355,8 @@ class PrimaryKeyEngine:
         all_tables = {
             row[0] for row in self.db.query(sql, parameters={"database": CH_DB}).result_rows
         }
+        if table_names is not None:
+            all_tables &= table_names
         tables_with_pk = {candidate.table_name for candidate in candidates}
 
         return sorted(all_tables - tables_with_pk)
@@ -329,6 +364,9 @@ class PrimaryKeyEngine:
     def to_primary_key_candidate(
         self,
         candidate: RankedKeyCandidate,
+        *,
+        analysis_scope: str = "LOGICAL",
+        is_official: bool = True,
     ) -> PrimaryKeyCandidate:
         """
         Convert a ranked candidate into the official primary-key object.
@@ -349,17 +387,22 @@ class PrimaryKeyEngine:
                 "confidence=weighted_uniqueness_and_identifiability; "
                 f"ranking={candidate.rank_reason}"
             ),
+            analysis_scope=analysis_scope,
+            is_official=is_official,
         )
 
     def store_candidates(
         self,
         candidates: list[PrimaryKeyCandidate],
+        *,
+        clear_existing: bool = True,
     ) -> None:
         """
         Persist primary-key candidates into the metadata table.
         """
 
-        clear_metadata_table(self.db, "primary_key_candidates")
+        if clear_existing:
+            clear_metadata_table(self.db, "primary_key_candidates")
 
         if not candidates:
             return
@@ -376,6 +419,8 @@ class PrimaryKeyEngine:
                 candidate.identifiability_score,
                 candidate.confidence,
                 candidate.reason,
+                candidate.analysis_scope,
+                candidate.is_official,
             ]
             for candidate in candidates
         ]
@@ -394,10 +439,17 @@ class PrimaryKeyEngine:
                 "identifiability_score",
                 "confidence",
                 "reason",
+                "analysis_scope",
+                "is_official",
             ],
         )
 
-    def load_candidates(self) -> list[PrimaryKeyCandidate]:
+    def load_candidates(
+        self,
+        analysis_scope: str = "LOGICAL",
+        *,
+        official_only: bool = True,
+    ) -> list[PrimaryKeyCandidate]:
         """
         Load primary-key candidates already stored in metadata.
         """
@@ -413,13 +465,24 @@ class PrimaryKeyEngine:
             uniqueness_ratio,
             identifiability_score,
             confidence,
-            reason
+            reason,
+            analysis_scope,
+            is_official
         FROM {q_ident(META_DB)}.primary_key_candidates
         WHERE database_name = %(database)s
+          AND analysis_scope = %(analysis_scope)s
+          AND (%(official_only)s = 0 OR is_official)
         ORDER BY table_name, confidence DESC, column_name
         """
 
-        rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
+        rows = self.db.query(
+            sql,
+            parameters={
+                "database": CH_DB,
+                "analysis_scope": analysis_scope,
+                "official_only": int(official_only),
+            },
+        ).result_rows
 
         return [
             PrimaryKeyCandidate(
@@ -433,6 +496,8 @@ class PrimaryKeyEngine:
                 identifiability_score=row[7],
                 confidence=row[8],
                 reason=row[9],
+                analysis_scope=row[10] if len(row) > 10 else analysis_scope,
+                is_official=bool(row[11]) if len(row) > 11 else official_only,
             )
             for row in rows
         ]
@@ -463,8 +528,10 @@ class PrimaryKeyEngine:
             return
 
         for candidate in candidates:
+            label = "PK" if candidate.is_official else "KEY_CANDIDATE"
             logger.info(
-                "\n\nPK | %s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s\n",
+                "\n\n%s | %s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s\n",
+                label,
                 candidate.database_name,
                 candidate.table_name,
                 candidate.column_name,

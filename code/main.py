@@ -3,7 +3,7 @@ from pathlib import Path
 
 from core.clickhouse_manager import get_manager
 from core.logger import get_logger
-from core.meta import clear_metadata_table, ensure_meta_schema
+from core.meta import ensure_meta_schema
 from generation.sql_view_generator import SQLViewGenerator
 from inference.adjacency import AdjacencyMatrixEngine
 from inference.functional_group_builder import FunctionalGroupBuilder
@@ -44,7 +44,7 @@ def run_csv_ingestion(path: str, table: str | None) -> None:
     )
 
 
-def run_folder_ingestion(path: str) -> None:
+def run_folder_ingestion(path: str) -> list[str]:
     db = get_manager()
     engine = CsvIngestionEngine(db)
 
@@ -56,6 +56,7 @@ def run_folder_ingestion(path: str) -> None:
 
     logger.info("Import dossier terminé : %s succès, %s échec(s)", success_count, failed_count)
     logger.info("Lignes importées : %s", total_rows)
+    return [result["target_table"] for result in results if result["status"] == "success"]
 
 
 def run_basic_profile(
@@ -83,13 +84,34 @@ def run_identifiability() -> None:
     engine.store_scores(results)
 
 
-def run_pk_inference() -> None:
+def run_pk_inference(
+    *,
+    analysis_scope: str = "LOGICAL",
+    table_names: set[str] | None = None,
+    select_best: bool = True,
+    clear_existing: bool = True,
+) -> None:
     db = get_manager()
     engine = PrimaryKeyEngine(db)
 
-    candidates = engine.infer_candidates()
-    engine.store_candidates(candidates)
+    candidates = engine.infer_candidates(
+        table_names=table_names,
+        select_best=select_best,
+        analysis_scope=analysis_scope,
+    )
+    engine.store_candidates(candidates, clear_existing=clear_existing)
     engine.print_candidates(candidates)
+
+
+def run_source_pk_inference(table_names: set[str] | None = None) -> None:
+    if table_names is None:
+        table_names = set(FunctionalGroupBuilder(get_manager()).load_profiles_by_table())
+    run_pk_inference(
+        analysis_scope="SOURCE",
+        table_names=table_names,
+        select_best=False,
+        clear_existing=True,
+    )
 
 
 def run_functional_group_inference() -> None:
@@ -116,7 +138,9 @@ def run_logical_table_building() -> list[str]:
 def run_logical_table_profile() -> None:
     db = get_manager()
     ensure_meta_schema(db)
-    logical_tables = [table.logical_table_name for table in LogicalTableBuilder(db).load_logical_tables()]
+    logical_tables = [
+        table.logical_table_name for table in LogicalTableBuilder(db).load_logical_tables()
+    ]
 
     if not logical_tables:
         logger.info("No logical tables found; keeping raw table profiles.")
@@ -152,18 +176,41 @@ def run_join(
     join_engine.print_result(result)
 
 
-def run_join_inference() -> None:
+def run_join_inference(
+    *,
+    analysis_scope: str = "LOGICAL",
+    table_names: set[str] | None = None,
+    official_only: bool = True,
+    clear_existing: bool = True,
+) -> None:
     db = get_manager()
 
-    primary_keys = PrimaryKeyEngine(db).load_candidates()
+    primary_keys = PrimaryKeyEngine(db).load_candidates(
+        analysis_scope=analysis_scope,
+        official_only=official_only,
+    )
     if not primary_keys:
         raise RuntimeError("No primary-key candidates found. Run infer-pk first.")
 
     join_engine = JoinEngine(db)
 
-    clear_metadata_table(db, "join_candidates")
-    candidates = join_engine.evaluate_candidates(primary_keys)
-    join_engine.store_candidates(candidates)
+    candidates = join_engine.evaluate_candidates(
+        primary_keys,
+        analysis_scope=analysis_scope,
+        table_names=table_names,
+    )
+    join_engine.store_candidates(candidates, clear_existing=clear_existing)
+
+
+def run_source_join_inference(table_names: set[str] | None = None) -> None:
+    if table_names is None:
+        table_names = set(FunctionalGroupBuilder(get_manager()).load_profiles_by_table())
+    run_join_inference(
+        analysis_scope="SOURCE",
+        table_names=table_names,
+        official_only=False,
+        clear_existing=True,
+    )
 
 
 def run_adjacency() -> None:
@@ -287,16 +334,51 @@ def run_all(path: str, report_path: str, skip_sql_views: bool) -> None:
     Run the full available pipeline from CSV ingestion to certification report.
     """
 
+    state: dict[str, list[str]] = {"source_tables": [], "logical_tables": []}
+
+    def ingest_sources() -> None:
+        state["source_tables"] = run_folder_ingestion(path)
+
+    def profile_sources() -> None:
+        run_basic_profile(tables=state["source_tables"])
+
+    def infer_source_keys() -> None:
+        run_source_pk_inference(set(state["source_tables"]))
+
+    def infer_source_joins() -> None:
+        run_source_join_inference(set(state["source_tables"]))
+
+    def build_logical_tables() -> None:
+        state["logical_tables"] = run_logical_table_building()
+
+    def infer_logical_keys() -> None:
+        run_pk_inference(
+            analysis_scope="LOGICAL",
+            table_names=set(state["logical_tables"]),
+            select_best=True,
+            clear_existing=False,
+        )
+
+    def infer_logical_joins() -> None:
+        run_join_inference(
+            analysis_scope="LOGICAL",
+            table_names=set(state["logical_tables"]),
+            official_only=True,
+            clear_existing=False,
+        )
+
     steps = [
-        ("ingest-folder", lambda: run_folder_ingestion(path)),
-        ("profile-basic", run_basic_profile),
+        ("ingest-folder", ingest_sources),
+        ("profile-basic", profile_sources),
         ("score-identifiability", run_identifiability),
+        ("infer-source-keys", infer_source_keys),
+        ("infer-source-joins", infer_source_joins),
         ("infer-functional-groups", run_functional_group_inference),
-        ("build-logical-tables", run_logical_table_building),
+        ("build-logical-tables", build_logical_tables),
         ("profile-logical-tables", run_logical_table_profile),
         ("score-logical-identifiability", run_identifiability),
-        ("infer-pk", run_pk_inference),
-        ("infer-joins", run_join_inference),
+        ("infer-pk", infer_logical_keys),
+        ("infer-joins", infer_logical_joins),
         ("build-adjacency", run_adjacency),
         ("infer-table-roles", run_table_roles),
         ("build-model-candidates", run_model_candidate_building),
@@ -365,6 +447,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Infer logical column groups from functional dependencies",
     )
     functional_groups_parser.set_defaults(handler=lambda args: run_functional_group_inference())
+
+    source_pk_parser = subparsers.add_parser(
+        "infer-source-keys",
+        help="Infer exact source key evidence before logical reconstruction",
+    )
+    source_pk_parser.set_defaults(handler=lambda args: run_source_pk_inference())
+
+    source_joins_parser = subparsers.add_parser(
+        "infer-source-joins",
+        help="Infer preliminary relationships between profiled source tables",
+    )
+    source_joins_parser.set_defaults(handler=lambda args: run_source_join_inference())
 
     logical_tables_parser = subparsers.add_parser(
         "build-logical-tables",

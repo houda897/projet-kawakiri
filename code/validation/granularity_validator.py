@@ -54,6 +54,10 @@ class GranularityValidator:
 
         for fact_table in candidate.fact_tables:
             grain_columns = self.build_fact_grain(candidate, fact_table)
+            grain_columns = self.enrich_with_transactional_grain(
+                fact_table=fact_table,
+                grain_columns=grain_columns,
+            )
 
             if not grain_columns:
                 results.append(
@@ -73,21 +77,11 @@ class GranularityValidator:
                 grain_columns=grain_columns,
             )
 
-            if duplicate_count > 0:
-                enriched_grain_columns = self.enrich_with_transactional_grain(
+            if duplicate_count == 0:
+                grain_columns = self.minimize_grain(
                     fact_table=fact_table,
                     grain_columns=grain_columns,
                 )
-
-                if enriched_grain_columns != grain_columns:
-                    enriched_duplicate_count = self.count_duplicate_grain_rows(
-                        fact_table=fact_table,
-                        grain_columns=enriched_grain_columns,
-                    )
-
-                    if enriched_duplicate_count <= duplicate_count:
-                        grain_columns = enriched_grain_columns
-                        duplicate_count = enriched_duplicate_count
 
             is_valid = duplicate_count == 0
 
@@ -145,6 +139,28 @@ class GranularityValidator:
                 enriched_columns.append(column)
 
         return tuple(enriched_columns)
+
+    def minimize_grain(
+        self,
+        fact_table: str,
+        grain_columns: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Remove every column that is unnecessary for exact row uniqueness."""
+        minimal = list(dict.fromkeys(grain_columns))
+        changed = True
+
+        while changed and len(minimal) > 1:
+            changed = False
+            for column in tuple(minimal):
+                reduced = tuple(candidate for candidate in minimal if candidate != column)
+                if not reduced:
+                    continue
+                if self.count_duplicate_grain_rows(fact_table, reduced) == 0:
+                    minimal = list(reduced)
+                    changed = True
+                    break
+
+        return tuple(minimal)
 
     def infer_transactional_grain_columns(self, fact_table: str) -> tuple[str, ...]:
         """

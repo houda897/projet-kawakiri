@@ -34,11 +34,16 @@ class DecisionModelCandidateBuilder:
         roles = self.load_table_roles()
         edges = self.load_confirmed_edges()
         column_counts = self.load_column_counts()
+        total_fact_count = len(self.fact_tables(roles))
 
         candidates = []
-        candidates.extend(self.build_star_candidates(roles, edges, column_counts))
-        candidates.extend(self.build_snowflake_candidates(roles, edges, column_counts))
-        candidates.extend(self.build_constellation_candidates(roles, edges, column_counts))
+        candidates.extend(self.build_star_candidates(roles, edges, column_counts, total_fact_count))
+        candidates.extend(
+            self.build_snowflake_candidates(roles, edges, column_counts, total_fact_count)
+        )
+        candidates.extend(
+            self.build_constellation_candidates(roles, edges, column_counts, total_fact_count)
+        )
 
         return candidates
 
@@ -64,6 +69,9 @@ class DecisionModelCandidateBuilder:
                 candidate.join_count,
                 candidate.attribute_count,
                 candidate.numeric_attribute_count,
+                candidate.covered_fact_count,
+                candidate.total_fact_count,
+                candidate.coverage_ratio,
             ]
             for candidate in candidates
         ]
@@ -96,6 +104,9 @@ class DecisionModelCandidateBuilder:
                 "join_count",
                 "attribute_count",
                 "numeric_attribute_count",
+                "covered_fact_count",
+                "total_fact_count",
+                "coverage_ratio",
             ],
         )
 
@@ -130,6 +141,9 @@ class DecisionModelCandidateBuilder:
             join_count,
             attribute_count,
             numeric_attribute_count
+            , covered_fact_count
+            , total_fact_count
+            , coverage_ratio
         FROM {q_ident(META_DB)}.decision_model_candidates
         WHERE database_name = %(database)s
         ORDER BY model_type, model_id
@@ -182,6 +196,9 @@ class DecisionModelCandidateBuilder:
                 join_count=row[5],
                 attribute_count=row[6],
                 numeric_attribute_count=row[7],
+                covered_fact_count=row[8] if len(row) > 8 else len(self.split_columns(row[2])),
+                total_fact_count=row[9] if len(row) > 9 else len(self.split_columns(row[2])),
+                coverage_ratio=row[10] if len(row) > 10 else 1.0,
             )
             for row in candidate_rows
         ]
@@ -241,6 +258,7 @@ class DecisionModelCandidateBuilder:
         roles: dict[str, str],
         edges: list[DecisionModelEdge],
         column_counts: dict[str, dict[str, int]],
+        total_fact_count: int | None = None,
     ) -> list[DecisionModelCandidate]:
         candidates = []
 
@@ -263,6 +281,7 @@ class DecisionModelCandidateBuilder:
                     dimension_tables=tuple(dimension_tables),
                     edges=tuple(fact_edges),
                     column_counts=column_counts,
+                    total_fact_count=total_fact_count,
                 )
             )
 
@@ -273,6 +292,7 @@ class DecisionModelCandidateBuilder:
         roles: dict[str, str],
         edges: list[DecisionModelEdge],
         column_counts: dict[str, dict[str, int]],
+        total_fact_count: int | None = None,
     ) -> list[DecisionModelCandidate]:
         candidates = []
 
@@ -292,9 +312,8 @@ class DecisionModelCandidateBuilder:
 
             for dimension_table in direct_dimensions:
                 for edge in edges:
-                    if (
-                        edge.source_table == dimension_table
-                        and self.is_dimension(roles, edge.target_table)
+                    if edge.source_table == dimension_table and self.is_dimension(
+                        roles, edge.target_table
                     ):
                         snowflake_edges.append(
                             DecisionModelEdge(
@@ -319,6 +338,7 @@ class DecisionModelCandidateBuilder:
                     dimension_tables=tuple(all_dimensions),
                     edges=tuple(snowflake_edges),
                     column_counts=column_counts,
+                    total_fact_count=total_fact_count,
                 )
             )
 
@@ -329,13 +349,13 @@ class DecisionModelCandidateBuilder:
         roles: dict[str, str],
         edges: list[DecisionModelEdge],
         column_counts: dict[str, dict[str, int]],
+        total_fact_count: int | None = None,
     ) -> list[DecisionModelCandidate]:
         facts_by_dimension: dict[str, set[str]] = defaultdict(set)
 
         for edge in edges:
-            if (
-                self.is_fact(roles, edge.source_table)
-                and self.is_dimension(roles, edge.target_table)
+            if self.is_fact(roles, edge.source_table) and self.is_dimension(
+                roles, edge.target_table
             ):
                 facts_by_dimension[edge.target_table].add(edge.source_table)
 
@@ -356,7 +376,46 @@ class DecisionModelCandidateBuilder:
             if edge.source_table in fact_tables and self.is_dimension(roles, edge.target_table)
         ]
 
-        dimension_tables = sorted({edge.target_table for edge in constellation_edges})
+        reachable_dimensions = {edge.target_table for edge in constellation_edges}
+        depth = 2
+        changed = True
+        while changed:
+            changed = False
+            for edge in edges:
+                if edge.source_table not in reachable_dimensions:
+                    continue
+                if not self.is_dimension(roles, edge.target_table):
+                    continue
+                if any(
+                    existing.source_table == edge.source_table
+                    and existing.target_table == edge.target_table
+                    and existing.source_columns == edge.source_columns
+                    for existing in constellation_edges
+                ):
+                    continue
+                constellation_edges.append(
+                    DecisionModelEdge(
+                        source_table=edge.source_table,
+                        target_table=edge.target_table,
+                        source_columns=edge.source_columns,
+                        target_columns=edge.target_columns,
+                        join_success_ratio=edge.join_success_ratio,
+                        depth=depth,
+                    )
+                )
+                if edge.target_table not in reachable_dimensions:
+                    reachable_dimensions.add(edge.target_table)
+                    changed = True
+            depth += 1
+
+        dimension_tables = sorted(
+            {edge.target_table for edge in constellation_edges}
+            | {
+                edge.source_table
+                for edge in constellation_edges
+                if self.is_dimension(roles, edge.source_table)
+            }
+        )
 
         return [
             self.to_candidate(
@@ -365,6 +424,7 @@ class DecisionModelCandidateBuilder:
                 dimension_tables=tuple(dimension_tables),
                 edges=tuple(constellation_edges),
                 column_counts=column_counts,
+                total_fact_count=total_fact_count,
             )
         ]
 
@@ -375,6 +435,7 @@ class DecisionModelCandidateBuilder:
         dimension_tables: tuple[str, ...],
         edges: tuple[DecisionModelEdge, ...],
         column_counts: dict[str, dict[str, int]],
+        total_fact_count: int | None = None,
     ) -> DecisionModelCandidate:
         tables = set(fact_tables) | set(dimension_tables)
 
@@ -386,6 +447,14 @@ class DecisionModelCandidateBuilder:
             column_counts.get(table, {}).get("numeric_attribute_count", 0) for table in tables
         )
 
+        resolved_total_fact_count = total_fact_count
+        if resolved_total_fact_count is None:
+            resolved_total_fact_count = len(fact_tables)
+        covered_fact_count = len(fact_tables)
+        coverage_ratio = (
+            covered_fact_count / resolved_total_fact_count if resolved_total_fact_count else 1.0
+        )
+
         return DecisionModelCandidate(
             model_type=model_type,
             fact_tables=fact_tables,
@@ -395,6 +464,9 @@ class DecisionModelCandidateBuilder:
             join_count=len(edges),
             attribute_count=attribute_count,
             numeric_attribute_count=numeric_attribute_count,
+            covered_fact_count=covered_fact_count,
+            total_fact_count=resolved_total_fact_count,
+            coverage_ratio=round(coverage_ratio, 6),
         )
 
     @staticmethod
@@ -421,7 +493,7 @@ class DecisionModelCandidateBuilder:
 
         for candidate in candidates:
             logger.info(
-                "%s | id=%s | facts=%s | dimensions=%s | tables=%s | joins=%s | attributes=%s | numeric_attributes=%s",
+                "%s | id=%s | facts=%s | dimensions=%s | tables=%s | joins=%s | attributes=%s | numeric_attributes=%s | coverage=%s",
                 candidate.model_type.value,
                 candidate.model_id,
                 ", ".join(candidate.fact_tables),
@@ -430,4 +502,5 @@ class DecisionModelCandidateBuilder:
                 candidate.join_count,
                 candidate.attribute_count,
                 candidate.numeric_attribute_count,
+                candidate.coverage_ratio,
             )

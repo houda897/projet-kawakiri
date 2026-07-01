@@ -42,11 +42,34 @@ AGGREGATION_STABILITY_COLUMNS = (
 
 DECISION_MODEL_SCORE_COLUMNS = (("normalized_score", "Float64"),)
 
+PRIMARY_KEY_CANDIDATE_COLUMNS = (
+    ("analysis_scope", "LowCardinality(String) DEFAULT 'LOGICAL'"),
+    ("is_official", "Bool DEFAULT true"),
+)
+
+JOIN_CANDIDATE_COLUMNS = (
+    ("database_name", f"String DEFAULT '{CH_DB}'"),
+    ("analysis_scope", "LowCardinality(String) DEFAULT 'LOGICAL'"),
+)
+
+DECISION_MODEL_CANDIDATE_COLUMNS = (
+    ("covered_fact_count", "UInt64 DEFAULT 0"),
+    ("total_fact_count", "UInt64 DEFAULT 0"),
+    ("coverage_ratio", "Float64 DEFAULT 1"),
+)
+
+DECISION_MODEL_SCORE_EXTRA_COLUMNS = (("coverage_score", "Float64 DEFAULT 1"),)
+
+MODEL_CERTIFICATION_COLUMNS = (("coverage_ratio", "Float64 DEFAULT 1"),)
+
 INGESTION_RUN_COLUMNS = (("skipped_dirty_rows", "UInt64"),)
 
 FUNCTIONAL_GROUP_COLUMNS = (
     ("group_score", "Float64"),
     ("group_role", "String"),
+    ("determinant_distinct_count", "UInt64 DEFAULT 0"),
+    ("determinant_uniqueness_ratio", "Float64 DEFAULT 1"),
+    ("repeated_row_count", "UInt64 DEFAULT 0"),
 )
 
 LOGICAL_TABLE_COLUMNS = (("logical_table_role", "String"),)
@@ -163,11 +186,17 @@ METADATA_TABLES = (
             identifiability_score Float64,
             confidence Float64,
             reason String,
+            analysis_scope LowCardinality(String) DEFAULT 'LOGICAL',
+            is_official Bool DEFAULT true,
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
         ORDER BY (database_name, table_name, confidence, column_name)
         """,
+        migrations=tuple(
+            add_column_sql("primary_key_candidates", column_name, column_type)
+            for column_name, column_type in PRIMARY_KEY_CANDIDATE_COLUMNS
+        ),
     ),
     MetadataTable(
         name="identifiability_scores",
@@ -227,6 +256,9 @@ METADATA_TABLES = (
             reason String,
             group_score Float64,
             group_role String,
+            determinant_distinct_count UInt64 DEFAULT 0,
+            determinant_uniqueness_ratio Float64 DEFAULT 1,
+            repeated_row_count UInt64 DEFAULT 0,
             created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree
@@ -328,11 +360,17 @@ METADATA_TABLES = (
         source_non_null_rows UInt64,
         matched_rows UInt64,
         join_success_ratio Float64,
+        database_name String DEFAULT '{CH_DB}',
+        analysis_scope LowCardinality(String) DEFAULT 'LOGICAL',
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (source_table, target_table, source_column, target_column, created_at)
     """,
+        migrations=tuple(
+            add_column_sql("join_candidates", column_name, column_type)
+            for column_name, column_type in JOIN_CANDIDATE_COLUMNS
+        ),
     ),
     MetadataTable(
         name="table_roles",
@@ -373,11 +411,18 @@ METADATA_TABLES = (
         join_count UInt64,
         attribute_count UInt64,
         numeric_attribute_count UInt64,
+        covered_fact_count UInt64 DEFAULT 0,
+        total_fact_count UInt64 DEFAULT 0,
+        coverage_ratio Float64 DEFAULT 1,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_type, model_id, created_at)
     """,
+        migrations=tuple(
+            add_column_sql("decision_model_candidates", column_name, column_type)
+            for column_name, column_type in DECISION_MODEL_CANDIDATE_COLUMNS
+        ),
     ),
     MetadataTable(
         name="decision_model_edges",
@@ -409,6 +454,7 @@ METADATA_TABLES = (
         model_id String,
         parsimony_score Float64,
         normalized_score Float64,
+        coverage_score Float64 DEFAULT 1,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
@@ -416,7 +462,9 @@ METADATA_TABLES = (
     """,
         migrations=tuple(
             add_column_sql("decision_model_scores", column_name, column_type)
-            for column_name, column_type in DECISION_MODEL_SCORE_COLUMNS
+            for column_name, column_type in (
+                DECISION_MODEL_SCORE_COLUMNS + DECISION_MODEL_SCORE_EXTRA_COLUMNS
+            )
         ),
     ),
     MetadataTable(
@@ -554,11 +602,16 @@ METADATA_TABLES = (
         certification_score Float64,
         parsimony_score Float64,
         issue_count UInt64,
+        coverage_ratio Float64 DEFAULT 1,
         created_at DateTime DEFAULT now()
     )
     ENGINE = MergeTree
     ORDER BY (database_name, model_id, created_at)
     """,
+        migrations=tuple(
+            add_column_sql("model_certifications", column_name, column_type)
+            for column_name, column_type in MODEL_CERTIFICATION_COLUMNS
+        ),
     ),
     MetadataTable(
         name="model_certification_issues",

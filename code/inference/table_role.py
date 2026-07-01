@@ -80,7 +80,10 @@ class TableRoleEngine:
                 additive_measure_columns=additive_measure_columns,
             )
 
-            if table_name in logical_table_roles:
+            if (
+                table_name in logical_table_roles
+                and logical_table_roles[table_name] != "UNKNOWN_CANDIDATE"
+            ):
                 role, confidence, reason = self.role_from_logical_table(
                     logical_table_roles[table_name]
                 )
@@ -223,6 +226,8 @@ class TableRoleEngine:
         SELECT DISTINCT table_name
         FROM {q_ident(META_DB)}.primary_key_candidates
         WHERE database_name = %(database)s
+          AND analysis_scope = 'LOGICAL'
+          AND is_official
         """
 
         rows = self.db.query(sql, parameters={"database": CH_DB}).result_rows
@@ -366,6 +371,20 @@ class TableRoleEngine:
                 "ISOLATED",
                 0.9,
                 "table_has_no_confirmed_relationships",
+            )
+
+        if (
+            outgoing_edges >= 1
+            and has_primary_key
+            and has_transactional_grain
+            and additive_measure_columns is not None
+            and additive_measure_columns > 0
+            and not is_lookup_table
+        ):
+            return (
+                "FACT",
+                0.8,
+                "table_has_transactional_grain_quantitative_grain_and_measure",
             )
 
         if (

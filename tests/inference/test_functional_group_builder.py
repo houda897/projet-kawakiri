@@ -81,7 +81,10 @@ def test_dependency_group_can_use_column_combination(monkeypatch) -> None:
         max_violations=0,
     ):
         calls.append((tuple(determinant_columns), dependent_column))
-        return tuple(determinant_columns) == ("order_id", "product_id") and dependent_column == "status"
+        return (
+            tuple(determinant_columns) == ("order_id", "product_id")
+            and dependent_column == "status"
+        )
 
     monkeypatch.setattr(
         "inference.functional_group_builder.check_column_dependency",
@@ -103,7 +106,9 @@ def test_dependency_group_can_use_column_combination(monkeypatch) -> None:
     )
 
     assert any(group.determinant_columns == ("order_id", "product_id") for group in groups)
-    combo_group = next(group for group in groups if group.determinant_columns == ("order_id", "product_id"))
+    combo_group = next(
+        group for group in groups if group.determinant_columns == ("order_id", "product_id")
+    )
     assert combo_group.dependent_columns == ("status",)
     assert (("order_id", "product_id"), "status") in calls
 
@@ -140,7 +145,7 @@ def test_simple_determinants_are_preferred_before_combinations(monkeypatch) -> N
     )
 
     assert [group.determinant_columns for group in groups] == [("customer_id",)]
-    assert not any(len(determinants) > 1 for determinants, _ in calls)
+    assert (("customer_id", "customer_name"), "order_id") in calls
 
 
 def test_measure_like_columns_are_not_selected_as_determinants() -> None:
@@ -158,6 +163,43 @@ def test_measure_like_columns_are_not_selected_as_determinants() -> None:
     assert [candidate.column_name for candidate in candidates] == [
         "ship_postal_code",
     ]
+
+
+def test_existing_group_can_absorb_singleton_through_fd_closure(monkeypatch) -> None:
+    def fake_check_column_dependency(
+        database,
+        table,
+        determinant_columns,
+        dependent_column,
+        db_manager,
+        max_violations=0,
+    ):
+        dependency = (tuple(determinant_columns), dependent_column)
+        return dependency in {
+            (("col1",), "col2"),
+            (("col1", "col2"), "col3"),
+        }
+
+    monkeypatch.setattr(
+        "inference.functional_group_builder.check_column_dependency",
+        fake_check_column_dependency,
+    )
+    profiles = [
+        make_profile("col1", uniqueness_ratio=0.2),
+        make_profile("col2", uniqueness_ratio=0.2),
+        make_profile("col3", uniqueness_ratio=0.2),
+    ]
+
+    groups = FunctionalGroupBuilder(FakeDb()).build_dependency_groups_for_table(
+        table_name="observations",
+        profiles=profiles,
+    )
+
+    assert len(groups) == 1
+    assert groups[0].determinant_columns == ("col1", "col2")
+    assert groups[0].dependent_columns == ("col3",)
+    assert groups[0].all_columns == ("col1", "col2", "col3")
+    assert groups[0].reason == "functional_dependency_closure_group"
 
 
 def test_temporal_columns_are_not_selected_as_determinants() -> None:
@@ -238,8 +280,7 @@ def test_final_groups_do_not_share_columns(monkeypatch) -> None:
     ):
         determinant_columns = tuple(determinant_columns)
         return (
-            determinant_columns == ("order_id",)
-            and dependent_column in {"ship_name", "order_date"}
+            determinant_columns == ("order_id",) and dependent_column in {"ship_name", "order_date"}
         ) or (
             determinant_columns == ("ship_name",)
             and dependent_column in {"customer_id", "ship_city"}
@@ -263,11 +304,7 @@ def test_final_groups_do_not_share_columns(monkeypatch) -> None:
         profiles=profiles,
     )
 
-    assigned_columns = [
-        column
-        for group in groups
-        for column in group.all_columns
-    ]
+    assigned_columns = [column for group in groups for column in group.all_columns]
 
     assert len(assigned_columns) == len(set(assigned_columns))
 
@@ -303,7 +340,9 @@ def test_key_like_determinant_beats_over_general_combination() -> None:
                 uniqueness_ratio=0.1,
                 identifiability_score=0.9,
             ),
-            "customer_name": make_profile("customer_name", distinct_count=100, uniqueness_ratio=0.1),
+            "customer_name": make_profile(
+                "customer_name", distinct_count=100, uniqueness_ratio=0.1
+            ),
         },
     )
 
@@ -367,10 +406,7 @@ def test_superstore_style_groups_prefer_entity_owners(monkeypatch) -> None:
         table_name="superstore",
         profiles=profiles,
     )
-    groups_by_key = {
-        group.determinant_columns: set(group.dependent_columns)
-        for group in groups
-    }
+    groups_by_key = {group.determinant_columns: set(group.dependent_columns) for group in groups}
 
     assert groups_by_key[("Customer_ID",)] == {"Customer_Name", "Segment"}
     assert groups_by_key[("Product_ID",)] == {
@@ -385,7 +421,5 @@ def test_superstore_style_groups_prefer_entity_owners(monkeypatch) -> None:
         "State",
     }
     assert groups_by_key[("Order_ID",)] == {
-        "Order_Date",
-        "Ship_Date",
         "Ship_Mode",
     }

@@ -32,6 +32,7 @@ class JoinPrimaryKeyCandidate:
     source_non_null_rows: int
     matched_rows: int
     join_success_ratio: float
+    analysis_scope: str = "LOGICAL"
 
 
 @dataclass
@@ -67,6 +68,12 @@ class JoinEngine:
         """
         Measure whether a source column is covered by a primary-key candidate.
         """
+
+        if primary_key.null_ratio > 0.000001 or primary_key.uniqueness_ratio < 0.999999999:
+            raise ValueError(
+                f"Join target {primary_key.table_name}.{primary_key.column_name} "
+                "is not a complete, strictly unique key."
+            )
 
         source_ref = f"{q_ident(CH_DB)}.{q_ident(source_table)}"
         target_ref = f"{q_ident(CH_DB)}.{q_ident(primary_key.table_name)}"
@@ -115,6 +122,7 @@ class JoinEngine:
             source_non_null_rows=row[0],
             matched_rows=row[1],
             join_success_ratio=round(row[2], 6),
+            analysis_scope=primary_key.analysis_scope,
         )
 
     def evaluate_join_by_target(
@@ -160,7 +168,10 @@ class JoinEngine:
             "Run profiling and primary-key inference first."
         )
 
-    def load_source_columns(self) -> list[SourceColumn]:
+    def load_source_columns(
+        self,
+        table_names: set[str] | None = None,
+    ) -> list[SourceColumn]:
         """
         Load all profiled columns that are eligible foreign-key candidates.
         """
@@ -186,6 +197,7 @@ class JoinEngine:
                 column_type=row[2],
             )
             for row in rows
+            if table_names is None or row[0] in table_names
         ]
 
     def evaluate_candidates(
@@ -199,13 +211,22 @@ class JoinEngine:
         limit_rows: int | None = EVALUATE_CANDIDATES.get("JOIN_SAMPLE_ROWS"),
         source_columns: list[SourceColumn] | None = None,
         max_workers: int | None = EVALUATE_CANDIDATES.get("JOIN_MAX_WORKERS", 4),
+        analysis_scope: str = "LOGICAL",
+        table_names: set[str] | None = None,
     ) -> list[JoinPrimaryKeyCandidate]:
         """
         Discover foreign-key relationships against primary-key candidates.
         """
 
+        primary_keys = [
+            primary_key
+            for primary_key in primary_keys
+            if primary_key.null_ratio <= 0.000001
+            and primary_key.uniqueness_ratio >= 0.999999999
+            and (table_names is None or primary_key.table_name in table_names)
+        ]
         if source_columns is None:
-            source_columns = self.load_source_columns()
+            source_columns = self.load_source_columns(table_names=table_names)
         stats = self.load_column_stats()
         source_columns = self.prefilter_source_columns(
             primary_keys=primary_keys,
@@ -265,12 +286,14 @@ class JoinEngine:
 
         def _evaluate(job: tuple[str, str, PrimaryKeyCandidate]) -> JoinPrimaryKeyCandidate:
             table_name, combo_str, primary_key = job
-            return self.evaluate_join_to_primary_key(
+            result = self.evaluate_join_to_primary_key(
                 source_table=table_name,
                 source_column=combo_str,
                 primary_key=primary_key,
                 limit_rows=limit_rows,
             )
+            result.analysis_scope = analysis_scope
+            return result
 
         candidates: list[JoinPrimaryKeyCandidate] = []
         try:
@@ -412,12 +435,15 @@ class JoinEngine:
     def store_candidates(
         self,
         candidates: list[JoinPrimaryKeyCandidate],
+        *,
+        clear_existing: bool = True,
     ) -> None:
         """
         Store inferred join candidates in metadata.
         """
 
-        clear_metadata_table(self.db, "join_candidates")
+        if clear_existing:
+            clear_metadata_table(self.db, "join_candidates")
 
         if not candidates:
             return
@@ -431,6 +457,8 @@ class JoinEngine:
                 candidate.source_non_null_rows,
                 candidate.matched_rows,
                 candidate.join_success_ratio,
+                CH_DB,
+                candidate.analysis_scope,
             ]
             for candidate in candidates
         ]
@@ -446,10 +474,15 @@ class JoinEngine:
                 "source_non_null_rows",
                 "matched_rows",
                 "join_success_ratio",
+                "database_name",
+                "analysis_scope",
             ],
         )
 
-    def load_candidates(self) -> list[JoinPrimaryKeyCandidate]:
+    def load_candidates(
+        self,
+        analysis_scope: str = "LOGICAL",
+    ) -> list[JoinPrimaryKeyCandidate]:
         """
         Load stored join candidates from metadata.
         """
@@ -462,12 +495,18 @@ class JoinEngine:
             target_column,
             source_non_null_rows,
             matched_rows,
-            join_success_ratio
+            join_success_ratio,
+            analysis_scope
         FROM {q_ident(META_DB)}.join_candidates
+        WHERE database_name = %(database)s
+          AND analysis_scope = %(analysis_scope)s
         ORDER BY source_table, target_table, source_column, target_column
         """
 
-        rows = self.db.query(sql).result_rows
+        rows = self.db.query(
+            sql,
+            parameters={"database": CH_DB, "analysis_scope": analysis_scope},
+        ).result_rows
 
         return [
             JoinPrimaryKeyCandidate(
@@ -478,6 +517,7 @@ class JoinEngine:
                 source_non_null_rows=row[4],
                 matched_rows=row[5],
                 join_success_ratio=row[6],
+                analysis_scope=row[7] if len(row) > 7 else analysis_scope,
             )
             for row in rows
         ]

@@ -12,6 +12,7 @@ from core.schema import q_ident
 logger = get_logger(__name__)
 
 EXPECTED_RULES = (
+    "MODEL_COVERAGE",
     "PARSIMONY_RANKING",
     "STRUCTURAL_VALIDATION",
     "DETERMINISTIC_GRANULARITY",
@@ -81,6 +82,9 @@ class CertificationReportExporter:
             "is_certified": certification["is_certified"],
             "certification_score": certification["certification_score"],
             "parsimony_score": certification["parsimony_score"],
+            "coverage_ratio": certification["coverage_ratio"],
+            "covered_fact_count": certification["covered_fact_count"],
+            "total_fact_count": certification["total_fact_count"],
             "fact_tables": certification["fact_tables"],
             "dimension_tables": certification["dimension_tables"],
             "passed_rules": passed_rules,
@@ -100,7 +104,10 @@ class CertificationReportExporter:
             c.certification_score,
             c.parsimony_score,
             m.fact_tables,
-            m.dimension_tables
+            m.dimension_tables,
+            c.coverage_ratio,
+            m.covered_fact_count,
+            m.total_fact_count
         FROM {q_ident(META_DB)}.model_certifications AS c
         INNER JOIN {q_ident(META_DB)}.decision_model_candidates AS m
             ON c.database_name = m.database_name
@@ -125,6 +132,13 @@ class CertificationReportExporter:
                 "parsimony_score": float(row[5]),
                 "fact_tables": self.split_columns(row[6]),
                 "dimension_tables": self.split_columns(row[7]),
+                "coverage_ratio": float(row[8]) if len(row) > 8 else 1.0,
+                "covered_fact_count": (
+                    int(row[9]) if len(row) > 9 else len(self.split_columns(row[6]))
+                ),
+                "total_fact_count": (
+                    int(row[10]) if len(row) > 10 else len(self.split_columns(row[6]))
+                ),
             }
             for row in rows
         ]
@@ -192,9 +206,7 @@ class CertificationReportExporter:
         certified_tables = set(best_model["fact_tables"] + best_model["dimension_tables"])
         logical_tables = self.load_logical_tables()
         logical_tables_outside_model = [
-            table
-            for table in logical_tables
-            if table["logical_table_name"] not in certified_tables
+            table for table in logical_tables if table["logical_table_name"] not in certified_tables
         ]
 
         covered_columns = self.load_covered_source_columns()
@@ -567,7 +579,7 @@ class CertificationReportExporter:
         target_columns = str(edge["target_columns"]).replace('"', "'")
         ratio = f"{edge['join_success_ratio']:.4g}"
         label = f"{source_columns} = {target_columns}; ratio={ratio}"
-        return f"  {parent} ||--o{{ {child} : \"{label}\""
+        return f'  {parent} ||--o{{ {child} : "{label}"'
 
     @staticmethod
     def build_mermaid_table_aliases(
@@ -580,9 +592,7 @@ class CertificationReportExporter:
         aliases = {}
 
         for index, table_name in enumerate(fact_tables, start=1):
-            aliases[table_name] = (
-                "FACT_TABLE" if len(fact_tables) == 1 else f"FACT_TABLE_{index}"
-            )
+            aliases[table_name] = "FACT_TABLE" if len(fact_tables) == 1 else f"FACT_TABLE_{index}"
 
         for index, table_name in enumerate(dimension_tables, start=1):
             aliases[table_name] = f"DIMENSION_TABLE_{index}"
@@ -603,11 +613,15 @@ class CertificationReportExporter:
     ) -> str:
         markers = []
         for edge in edges:
-            if table_name == edge["target_table"] and column_name in CertificationReportExporter.split_columns(
+            if table_name == edge[
+                "target_table"
+            ] and column_name in CertificationReportExporter.split_columns(
                 str(edge["target_columns"])
             ):
                 markers.append("PK")
-            if table_name == edge["source_table"] and column_name in CertificationReportExporter.split_columns(
+            if table_name == edge[
+                "source_table"
+            ] and column_name in CertificationReportExporter.split_columns(
                 str(edge["source_columns"])
             ):
                 markers.append("FK")
