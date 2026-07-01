@@ -162,6 +162,12 @@ Run the ClickHouse integration test explicitly:
 pytest --run-integration tests/integration/test_e2e_pipeline.py
 ```
 
+The integration test dataset can be download from Zenodo ([link here](https://zenodo.org/records/21100022)) or with de DOI :
+
+```bash
+10.5281/zenodo.21100022
+```
+
 Build the documentation with strict link and configuration checks:
 
 ```bash
