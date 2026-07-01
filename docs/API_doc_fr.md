@@ -65,6 +65,13 @@ d'une colonne.
 `FunctionalColumnGroup` expose les déterminants, les dépendants, la confiance, le score
 du groupe et la propriété `all_columns`.
 
+### `inference.source_structure.SourceStructureAnalyzer`
+
+- `load_structures()` : charge les clés et relations préliminaires des sources.
+- `select_entity_keys(keys, joins)` : choisit la clé possédée par chaque table à partir
+  des références entrantes et sortantes.
+- `select_relationships(...)` : conserve les relations ciblant les clés exactes retenues.
+
 ### `modeling.fact_dimension_builder.FactDimensionBuilder`
 
 - `build_plans()` : classe les groupes prouvés et construit les plans logiques.
@@ -80,8 +87,8 @@ du groupe et la propriété `all_columns`.
 
 ### `inference.primary_key.PrimaryKeyEngine`
 
-- `infer_candidates(threshold=0.99)` : recherche et classe les clés simples, composées
-  et issues des déterminants logiques.
+- `infer_candidates(...)` : recherche les clés exactes simples, composées et logiques
+  dans les périmètres d'analyse `SOURCE` ou `LOGICAL`.
 - `store_candidates(candidates)` / `load_candidates()` : persiste ou relit les clés.
 
 ### `inference.join_candidate.JoinEngine`

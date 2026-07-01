@@ -11,7 +11,8 @@ flowchart TD
     A[CSV files] --> B[CsvIngestionEngine]
     B --> C[ProfileEngine and compute_column_stats]
     C --> D[IdentifiabilityEngine]
-    D --> E[FunctionalGroupBuilder]
+    D --> S[Source key and relationship evidence]
+    S --> E[FunctionalGroupBuilder]
     E --> F[FactDimensionBuilder]
     F --> G[LogicalTableBuilder]
     G --> H[Logical-table profiling]
@@ -34,6 +35,7 @@ flowchart TD
 | Ingestion | CSV files | Physical ClickHouse tables and ingestion metadata |
 | Profiling | Physical columns | Cardinality, null ratio, entropy, variability, skewness |
 | Identifiability | Column profiles | Identifier suitability scores |
+| Source structure | Exact source keys and inclusion tests | Preliminary entity keys and relationships |
 | Functional grouping | Raw profiles and FD tests | Non-overlapping groups and singletons |
 | Logical modeling | Functional groups and profiles | Logical fact/dimension plans |
 | Materialization | Logical plans | Logical ClickHouse tables |
@@ -54,6 +56,13 @@ flowchart TD
 where `D` is a simple or composite determinant and `c` is a candidate dependent
 column. Candidate groups are scored and selected without column overlap. Remaining
 columns are retained as singleton groups.
+
+The source pass distinguishes two cases. In a flat event table, a determinant must
+repeat and reduce the number of rows before its dependents can form an extracted
+dimension. In an already-normalized source referenced by other tables, the complete
+entity is retained and its key is chosen from incoming and outgoing relationship
+evidence. This prevents an accidentally unique foreign key from replacing the key
+owned by the table.
 
 The builder also computes an iterative closure. If the current group columns determine
 an unassigned column, the determinant is promoted to the complete current group before
@@ -81,8 +90,9 @@ Four final roles are used:
 - `ISOLATED`: a table with no confirmed edge;
 - `UNKNOWN`: evidence is insufficient or contradictory.
 
-The logical layer additionally uses `FACT_CANDIDATE` and `DIMENSION_CANDIDATE` before
-the graph-based role inference step.
+The logical layer additionally uses `FACT_CANDIDATE`, `DIMENSION_CANDIDATE`, and
+`UNKNOWN_CANDIDATE` before graph-based role inference. The neutral role prevents an
+unresolved source from being discarded or forced into an unsupported interpretation.
 
 ## Model validation
 
@@ -93,6 +103,10 @@ Certification combines several independent checks:
 3. semantic homogeneity of facts and dimensions;
 4. aggregation stability through inferred joins;
 5. model ranking and coverage information.
+
+An otherwise valid candidate with incomplete fact coverage receives a warning rather
+than a full certification. Fact grains are reduced after the uniqueness test so the
+reported grain contains no unnecessary columns.
 
 Certification validates the implemented conditions. It cannot resolve every case of
 non-identifiability when multiple structures are equally compatible with the data.

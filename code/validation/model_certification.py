@@ -30,6 +30,7 @@ class ModelCertificationResult:
     parsimony_score: float
     issue_count: int
     issues: tuple[CertificationIssue, ...]
+    coverage_ratio: float = 1.0
 
 
 class ModelCertificationEngine:
@@ -84,6 +85,19 @@ class ModelCertificationEngine:
         stability_results: dict[str, list[dict]],
     ) -> ModelCertificationResult:
         issues: list[CertificationIssue] = []
+
+        if candidate.coverage_ratio < 0.999999:
+            issues.append(
+                CertificationIssue(
+                    rule_name="MODEL_COVERAGE",
+                    severity="WARNING",
+                    message=(
+                        f"Model covers {candidate.covered_fact_count} of "
+                        f"{candidate.total_fact_count} inferred fact tables "
+                        f"({candidate.coverage_ratio:.2%})."
+                    ),
+                )
+            )
 
         parsimony_score = parsimony_scores.get(candidate.model_id, 0.0)
         if candidate.model_id not in parsimony_scores:
@@ -198,6 +212,7 @@ class ModelCertificationEngine:
             parsimony_score=parsimony_score,
             issue_count=len(issues),
             issues=tuple(issues),
+            coverage_ratio=candidate.coverage_ratio,
         )
 
     def store_results(self, results: list[ModelCertificationResult]) -> None:
@@ -216,6 +231,7 @@ class ModelCertificationEngine:
                 result.certification_score,
                 result.parsimony_score,
                 result.issue_count,
+                result.coverage_ratio,
             ]
             for result in results
         ]
@@ -244,6 +260,7 @@ class ModelCertificationEngine:
                 "certification_score",
                 "parsimony_score",
                 "issue_count",
+                "coverage_ratio",
             ],
         )
 

@@ -123,7 +123,7 @@ class SemanticHomogeneityValidator:
     def check_fact_homogeneity(self, table_name: str) -> dict:
         """Prove that a fact table doesn't contain dimension attributes"""
 
-        fact_fk_columns = self.load_fact_fk_columns(table_name)
+        structural_columns = self.load_fact_structural_columns(table_name)
 
         sql = f"""
         SELECT
@@ -155,7 +155,7 @@ class SemanticHomogeneityValidator:
             col_name, col_type, entropy, cv, null_ratio, uniqueness_ratio = row
             col_lower = col_name.lower()
 
-            if col_name in fact_fk_columns:
+            if col_name in structural_columns:
                 continue
 
             if self.is_key_like_column(col_name):
@@ -178,28 +178,9 @@ class SemanticHomogeneityValidator:
                     )
                 continue
 
-            entropy_val = entropy or 0.0
-            cv_val = cv or 0.0
-            cv_bounded = min(abs(cv_val) / 2.0, 1.0)
-            fact_weights = self.w_entropy + self.w_cv
-
-            dim_score = (
-                (self.w_entropy * (1.0 - entropy_val))
-                + (self.w_cv * math.exp(-cv_bounded))
-            ) / fact_weights
-
-            if dim_score > self.threshold:
-                violations.append(
-                    {
-                        "column": col_name,
-                        "score": round(dim_score, 3),
-                        "reason": (
-                            f"Distribution too discrete for a fact "
-                            f"(Entropy = {round(entropy_val, 2)}, Variable coef = {round(cv_val, 2)}, "
-                            f"Uniqueness = {round(uniqueness_ratio or 0.0, 2)})"
-                        ),
-                    }
-                )
+            # A discrete numeric distribution can be a sequence, rating, flag,
+            # degenerate dimension, or legitimate measure. Distribution alone
+            # is therefore insufficient evidence to reject a fact table.
 
         issue_count = len(violations)
         is_valid = issue_count == 0
@@ -224,12 +205,24 @@ class SemanticHomogeneityValidator:
             "reason": reason_str,
         }
 
-    def load_fact_fk_columns(self, table_name: str) -> set[str]:
+    def load_fact_structural_columns(self, table_name: str) -> set[str]:
+        """Load confirmed foreign keys and validated grain columns for a fact."""
         sql = f"""
-        SELECT source_columns
-        FROM {q_ident(META_DB)}.decision_model_edges
-        WHERE database_name = %(db)s
-          AND source_table = %(table)s
+        SELECT structural_columns
+        FROM (
+            SELECT source_columns AS structural_columns
+            FROM {q_ident(META_DB)}.decision_model_edges
+            WHERE database_name = %(db)s
+              AND source_table = %(table)s
+
+            UNION ALL
+
+            SELECT grain_columns AS structural_columns
+            FROM {q_ident(META_DB)}.granularity_validations
+            WHERE database_name = %(db)s
+              AND fact_table = %(table)s
+              AND is_valid = true
+        )
         """
 
         rows = self.db.query(

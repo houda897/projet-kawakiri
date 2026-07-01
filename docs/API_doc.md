@@ -69,6 +69,14 @@ one column.
 `FunctionalColumnGroup` exposes `determinant_columns`, `dependent_columns`,
 `confidence`, `group_score`, and the combined `all_columns` property.
 
+### `inference.source_structure.SourceStructureAnalyzer`
+
+- `load_structures()`: load preliminary source keys and relationships.
+- `select_entity_keys(keys, joins)`: prefer the key owned by each source from incoming
+  and outgoing reference evidence.
+- `select_relationships(joins, entity_keys)`: retain relationships targeting the
+  selected exact entity keys.
+
 ### `modeling.fact_dimension_builder.FactDimensionBuilder`
 
 - `build_plans()`: classify proven groups and construct logical table plans.
@@ -85,8 +93,8 @@ one column.
 
 ### `inference.primary_key.PrimaryKeyEngine`
 
-- `infer_candidates(threshold=0.99)`: infer and rank simple, composite, and logical
-  determinant candidates.
+- `infer_candidates(...)`: infer exact simple, composite, and logical determinant
+  candidates for either the `SOURCE` or `LOGICAL` analysis scope.
 - `store_candidates(candidates)` / `load_candidates()`: persist or reload PK evidence.
 
 ### `inference.join_candidate.JoinEngine`

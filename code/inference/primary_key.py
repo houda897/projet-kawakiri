@@ -528,8 +528,10 @@ class PrimaryKeyEngine:
             return
 
         for candidate in candidates:
+            label = "PK" if candidate.is_official else "KEY_CANDIDATE"
             logger.info(
-                "\n\nPK | %s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s\n",
+                "\n\n%s | %s.%s -> %s | confidence=%s | uniqueness=%s | reason=%s\n",
+                label,
                 candidate.database_name,
                 candidate.table_name,
                 candidate.column_name,

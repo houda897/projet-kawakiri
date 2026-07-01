@@ -1,7 +1,11 @@
 from inference.functional_group_builder import FunctionalColumnGroup, FunctionalColumnProfile
+from inference.join_candidate import JoinPrimaryKeyCandidate
+from inference.primary_key import PrimaryKeyCandidate
+from inference.source_structure import SourceTableStructure
 from modeling.fact_dimension_builder import (
     DIMENSION_CANDIDATE,
     FACT_CANDIDATE,
+    UNKNOWN_CANDIDATE,
     FactDimensionBuilder,
     LogicalTablePlan,
 )
@@ -9,6 +13,61 @@ from modeling.fact_dimension_builder import (
 
 class FakeDb:
     pass
+
+
+def make_source_structure(
+    table: str,
+    key: str,
+    *,
+    incoming: tuple[str, ...] = (),
+    outgoing: tuple[tuple[str, str], ...] = (),
+) -> SourceTableStructure:
+    entity_key = PrimaryKeyCandidate(
+        database_name="db",
+        table_name=table,
+        column_name=key,
+        column_type="String",
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.9,
+        confidence=0.93,
+        reason="exact",
+        analysis_scope="SOURCE",
+        is_official=False,
+    )
+    incoming_edges = tuple(
+        JoinPrimaryKeyCandidate(
+            source_table=source,
+            source_column=key,
+            target_table=table,
+            target_column=key,
+            source_non_null_rows=100,
+            matched_rows=100,
+            join_success_ratio=1.0,
+            analysis_scope="SOURCE",
+        )
+        for source in incoming
+    )
+    outgoing_edges = tuple(
+        JoinPrimaryKeyCandidate(
+            source_table=table,
+            source_column=source_column,
+            target_table=target_table,
+            target_column=source_column,
+            source_non_null_rows=100,
+            matched_rows=100,
+            join_success_ratio=1.0,
+            analysis_scope="SOURCE",
+        )
+        for source_column, target_table in outgoing
+    )
+    return SourceTableStructure(
+        table_name=table,
+        entity_key=entity_key,
+        incoming_relationships=incoming_edges,
+        outgoing_relationships=outgoing_edges,
+    )
 
 
 def make_profile(
@@ -189,6 +248,25 @@ def test_calendar_table_does_not_become_fact() -> None:
     )
 
     assert plans == []
+
+
+def test_unresolved_source_is_preserved_as_neutral_logical_table() -> None:
+    profiles = {
+        "observations": [
+            make_profile("observations", "label"),
+            make_profile("observations", "comment"),
+        ]
+    }
+
+    plans = FactDimensionBuilder(FakeDb()).build_unknown_tables(
+        profiles,
+        existing_plans=[],
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == UNKNOWN_CANDIDATE
+    assert plans[0].columns == ("label", "comment")
+    assert not plans[0].distinct_rows
 
 
 def test_over_general_customer_group_is_rejected_when_unique_key_exists() -> None:
@@ -378,8 +456,7 @@ def legacy_contextual_dimensions_move_descriptive_columns_out_of_fact(monkeypatc
     )
 
     dimensions_by_key = {
-        dimension.determinant_columns: set(dimension.columns)
-        for dimension in dimensions
+        dimension.determinant_columns: set(dimension.columns) for dimension in dimensions
     }
     assert dimensions_by_key[("Product_ID",)] == {
         "Product_ID",
@@ -610,7 +687,9 @@ def test_ocean_observations_become_fact_without_erp_measure_names() -> None:
             make_profile("ocean_observations", "observed_at", "DateTime", uniqueness_ratio=0.8),
             make_profile("ocean_observations", "temperature", "Float64", uniqueness_ratio=0.7),
             make_profile("ocean_observations", "salinity", "Float64", uniqueness_ratio=0.6),
-            make_profile("ocean_observations", "quality_flag", distinct_count=3, uniqueness_ratio=0.03),
+            make_profile(
+                "ocean_observations", "quality_flag", distinct_count=3, uniqueness_ratio=0.03
+            ),
         ]
     }
 
@@ -628,6 +707,68 @@ def test_ocean_observations_become_fact_without_erp_measure_names() -> None:
         "temperature",
         "salinity",
     )
+
+
+def test_single_measure_payment_source_becomes_fact_with_relationship_evidence() -> None:
+    profiles = {
+        "payments": [
+            make_profile("payments", "order_id", uniqueness_ratio=0.8),
+            make_profile("payments", "payment_sequence", uniqueness_ratio=0.1),
+            make_profile("payments", "payment_type"),
+            make_profile("payments", "payment_value", "Float64", uniqueness_ratio=0.7),
+        ]
+    }
+    structure = make_source_structure(
+        "payments",
+        "order_id, payment_sequence",
+        outgoing=(("order_id", "orders"),),
+    )
+
+    plans = FactDimensionBuilder(FakeDb()).build_fact_tables(
+        groups=[],
+        profiles_by_table=profiles,
+        dimension_plans=[],
+        source_structures={"payments": structure},
+    )
+
+    assert len(plans) == 1
+    assert plans[0].logical_table_role == FACT_CANDIDATE
+    assert set(plans[0].columns) == {"order_id", "payment_sequence", "payment_value"}
+
+
+def test_referenced_normalized_order_header_remains_one_dimension_group() -> None:
+    profiles = {
+        "order_id": make_profile("orders", "order_id", uniqueness_ratio=1.0),
+        "customer_id": make_profile("orders", "customer_id", uniqueness_ratio=1.0),
+        "order_status": make_profile("orders", "order_status"),
+        "purchased_at": make_profile("orders", "purchased_at", "DateTime"),
+    }
+    group = FunctionalColumnGroup(
+        database_name="db",
+        source_table="orders",
+        group_name="logical_orders_order_id",
+        determinant_columns=("order_id",),
+        dependent_columns=("customer_id", "order_status", "purchased_at"),
+        confidence=1.0,
+        reason="normalized_source_entity_group",
+        group_role="NORMALIZED_ENTITY",
+    )
+    structure = make_source_structure(
+        "orders",
+        "order_id",
+        incoming=("items", "payments"),
+        outgoing=(("customer_id", "customers"),),
+    )
+
+    plans = FactDimensionBuilder(FakeDb()).build_dimension_tables(
+        [group],
+        {"orders": profiles},
+        {"orders": structure},
+    )
+
+    assert len(plans) == 1
+    assert plans[0].determinant_columns == ("order_id",)
+    assert set(plans[0].columns) == set(profiles)
 
 
 def legacy_uppercase_erp_lookup_sources_become_complete_dimensions() -> None:

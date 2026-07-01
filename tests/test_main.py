@@ -9,12 +9,14 @@ def test_run_all_executes_validations_before_certification_and_report(monkeypatc
         "run_folder_ingestion",
         "run_basic_profile",
         "run_identifiability",
+        "run_source_pk_inference",
+        "run_source_join_inference",
         "run_functional_group_inference",
         "run_logical_table_building",
         "run_logical_table_profile",
         "run_identifiability",
-        "run_pk_inference",
-        "run_join_inference",
+        "run_pk_inference:LOGICAL",
+        "run_join_inference:LOGICAL",
         "run_adjacency",
         "run_table_roles",
         "run_model_candidate_building",
@@ -33,12 +35,37 @@ def test_run_all_executes_validations_before_certification_and_report(monkeypatc
         calls.append(f"run_identifiability:{identifiability_call_count}")
         identifiability_call_count += 1
 
-    for step_name in set(step_names):
+    patched_names = {step_name.split(":", 1)[0] for step_name in step_names}
+    for step_name in patched_names:
         if step_name == "run_folder_ingestion":
             monkeypatch.setattr(
                 main,
                 step_name,
-                lambda path, current_step=step_name: calls.append(current_step),
+                lambda path, current_step=step_name: (
+                    calls.append(current_step) or ["source_table"]
+                ),
+            )
+        elif step_name == "run_logical_table_building":
+            monkeypatch.setattr(
+                main,
+                step_name,
+                lambda current_step=step_name: (calls.append(current_step) or ["logical_table"]),
+            )
+        elif step_name == "run_pk_inference":
+            monkeypatch.setattr(
+                main,
+                step_name,
+                lambda *args, **kwargs: calls.append(
+                    f"run_pk_inference:{kwargs.get('analysis_scope', 'LOGICAL')}"
+                ),
+            )
+        elif step_name == "run_join_inference":
+            monkeypatch.setattr(
+                main,
+                step_name,
+                lambda *args, **kwargs: calls.append(
+                    f"run_join_inference:{kwargs.get('analysis_scope', 'LOGICAL')}"
+                ),
             )
         elif step_name == "run_certification_report_export":
             monkeypatch.setattr(
@@ -52,7 +79,7 @@ def test_run_all_executes_validations_before_certification_and_report(monkeypatc
             monkeypatch.setattr(
                 main,
                 step_name,
-                lambda current_step=step_name: calls.append(current_step),
+                lambda *args, current_step=step_name, **kwargs: calls.append(current_step),
             )
 
     main.run_all("csv-folder", "report.json", skip_sql_views=False)
@@ -73,10 +100,6 @@ def test_run_all_executes_validations_before_certification_and_report(monkeypatc
     assert calls.index("run_aggregation_stability_validation") < calls.index(
         "run_model_certification"
     )
-    assert calls.index("run_model_certification") < calls.index(
-        "run_certification_report_export"
-    )
-    assert calls.index("run_functional_group_inference") < calls.index(
-        "run_logical_table_building"
-    )
-    assert calls.index("run_logical_table_profile") < calls.index("run_pk_inference")
+    assert calls.index("run_model_certification") < calls.index("run_certification_report_export")
+    assert calls.index("run_functional_group_inference") < calls.index("run_logical_table_building")
+    assert calls.index("run_logical_table_profile") < calls.index("run_pk_inference:LOGICAL")

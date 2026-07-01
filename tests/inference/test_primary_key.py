@@ -1,5 +1,7 @@
-from inference.primary_key import PrimaryKeyCandidate, PrimaryKeyEngine
+from unittest.mock import patch
+
 from inference.key_ranking import RankedKeyCandidate
+from inference.primary_key import PrimaryKeyCandidate, PrimaryKeyEngine
 
 
 class FakeQueryResult:
@@ -61,6 +63,28 @@ def test_primary_key_candidate_with_low_confidence() -> None:
 
     assert candidate.table_name == "orders"
     assert candidate.confidence == 0.87
+
+
+def test_print_candidates_distinguishes_preliminary_key_candidate() -> None:
+    candidate = PrimaryKeyCandidate(
+        database_name="lab_db",
+        table_name="orders",
+        column_name="customer_id",
+        column_type="String",
+        rows=100,
+        null_ratio=0.0,
+        uniqueness_ratio=1.0,
+        identifiability_score=0.9,
+        confidence=1.0,
+        reason="preliminary_source_key",
+        analysis_scope="SOURCE",
+        is_official=False,
+    )
+
+    with patch("inference.primary_key.logger.info") as log_info:
+        PrimaryKeyEngine.print_candidates([candidate])
+
+    assert log_info.call_args.args[1] == "KEY_CANDIDATE"
 
 
 def test_load_candidates_reads_stored_primary_keys() -> None:

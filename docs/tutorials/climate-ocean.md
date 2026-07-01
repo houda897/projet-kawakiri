@@ -74,6 +74,8 @@ it is preferable to fabricating a relationship unsupported by the data.
 kawakiri ingest-folder code/climat_ocean_dataset/data
 kawakiri profile-basic
 kawakiri score-identifiability
+kawakiri infer-source-keys
+kawakiri infer-source-joins
 kawakiri infer-functional-groups
 kawakiri build-logical-tables
 kawakiri profile-logical-tables

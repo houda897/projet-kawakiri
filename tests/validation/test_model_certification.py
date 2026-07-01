@@ -158,6 +158,45 @@ def test_certify_candidate_warns_when_expected_results_are_missing() -> None:
     assert all(issue.severity == "WARNING" for issue in result.issues)
 
 
+def test_certify_candidate_warns_when_model_covers_only_one_fact() -> None:
+    engine = ModelCertificationEngine(db=MagicMock())
+    base = make_candidate()
+    candidate = DecisionModelCandidate(
+        model_type=base.model_type,
+        fact_tables=base.fact_tables,
+        dimension_tables=base.dimension_tables,
+        edges=base.edges,
+        table_count=base.table_count,
+        join_count=base.join_count,
+        attribute_count=base.attribute_count,
+        numeric_attribute_count=base.numeric_attribute_count,
+        covered_fact_count=1,
+        total_fact_count=3,
+        coverage_ratio=1 / 3,
+    )
+
+    result = engine.certify_candidate(
+        candidate=candidate,
+        parsimony_scores={candidate.model_id: 1.0},
+        structural_results={
+            candidate.model_id: {"is_valid": True, "issue_count": 0, "orphan_count": 0}
+        },
+        granularity_results={
+            candidate.model_id: [{"fact_table": "sales", "is_valid": True, "reason": "ok"}]
+        },
+        homogeneity_results={
+            "sales": {"is_valid": True, "reason": "ok"},
+            "customers": {"is_valid": True, "reason": "ok"},
+        },
+        stability_results={candidate.model_id: [{"is_stable": True}]},
+    )
+
+    assert result.status == "WARNING"
+    assert result.is_certified is False
+    assert result.coverage_ratio == 1 / 3
+    assert any(issue.rule_name == "MODEL_COVERAGE" for issue in result.issues)
+
+
 def test_store_results_persists_certifications_and_issues() -> None:
     db = MagicMock()
     engine = ModelCertificationEngine(db)

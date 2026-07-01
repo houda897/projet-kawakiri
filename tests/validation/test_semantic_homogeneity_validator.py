@@ -47,7 +47,7 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         self.assertEqual(report["homogeneity_score"], 1.0)
 
     def test_check_fact_homogeneity_invalid(self):
-        """Test an invalid fact with a descriptive text field and a variance-free measure"""
+        """A descriptive text field is invalid, while a discrete number is inconclusive."""
         mock_result = MagicMock()
         mock_result.result_rows = [
             ("customer_name", "String", 0.5, 0.0, 0.0, 0.1),
@@ -61,9 +61,9 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         report = self.validator.check_fact_homogeneity("fact_bad")
 
         self.assertFalse(report["is_valid"])
-        self.assertEqual(report["issue_count"], 2)
+        self.assertEqual(report["issue_count"], 1)
         self.assertTrue("customer_name" in report["descriptive_like_columns"])
-        self.assertTrue("bad_flag" in report["descriptive_like_columns"])
+        self.assertFalse("bad_flag" in report["descriptive_like_columns"])
 
     def test_check_fact_homogeneity_allows_string_foreign_key(self):
         fk_result = MagicMock()
@@ -76,6 +76,21 @@ class TestSemanticHomogeneityValidator(unittest.TestCase):
         self.mock_db.query.side_effect = [fk_result, stats_result]
 
         report = self.validator.check_fact_homogeneity("fact_sales")
+
+        self.assertTrue(report["is_valid"])
+        self.assertEqual(report["issue_count"], 0)
+
+    def test_check_fact_homogeneity_excludes_validated_grain_columns(self):
+        structural_result = MagicMock()
+        structural_result.result_rows = [("order_id, payment_sequential",)]
+        stats_result = MagicMock()
+        stats_result.result_rows = [
+            ("payment_sequential", "Int64", 0.02, 0.39, 0.0, 0.0),
+            ("payment_value", "Float64", 0.8, 1.2, 0.0, 0.8),
+        ]
+        self.mock_db.query.side_effect = [structural_result, stats_result]
+
+        report = self.validator.check_fact_homogeneity("fact_payments")
 
         self.assertTrue(report["is_valid"])
         self.assertEqual(report["issue_count"], 0)

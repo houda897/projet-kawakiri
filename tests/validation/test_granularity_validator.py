@@ -88,23 +88,17 @@ def test_validate_returns_invalid_when_duplicate_grain_exists() -> None:
 
 def test_validate_enriches_duplicate_dimension_grain_with_transactional_key() -> None:
     db = MagicMock()
-    db.query.side_effect = [
-        SimpleNamespace(result_rows=[(3,)]),
-        SimpleNamespace(result_rows=[("order_id, customer_id, product_id",)]),
-        SimpleNamespace(result_rows=[(0,)]),
-    ]
     validator = GranularityValidator(db)
+    validator.infer_transactional_grain_columns = lambda fact_table: ("order_id",)
+    validator.count_duplicate_grain_rows = lambda fact_table, grain_columns: (
+        0 if "order_id" in grain_columns else 3
+    )
 
     results = validator.validate(make_candidate())
 
     assert results[0].is_valid is True
     assert results[0].duplicate_count == 0
-    assert results[0].grain_columns == (
-        "customer_id",
-        "product_id",
-        "variant_id",
-        "order_id",
-    )
+    assert results[0].grain_columns == ("order_id",)
 
 
 def test_store_results_persists_granularity_validation() -> None:

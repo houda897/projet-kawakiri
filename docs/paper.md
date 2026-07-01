@@ -104,6 +104,7 @@ monolithic inference step:
 -> ingestion 
 -> profiling 
 -> identifiability scoring 
+-> preliminary source-key and relationship inference
 -> functional-dependency grouping
 -> logical fact/dimension materialization
 -> logical-table profiling
@@ -214,4 +215,3 @@ inference, and final certification status match the expected model. Each pipelin
 stage and validation rule is implemented and tested as an independent unit, and the
 certification report format is designed so that new structural rules can be added
 without changing the report schema.
-
