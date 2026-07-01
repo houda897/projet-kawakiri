@@ -1,5 +1,5 @@
 customer_id;customer_name;country;segment
-1;Alice Martin;FR;Retail
-2;Bob Keller;DE;Enterprise
-3;Carla Ruiz;ES;Retail
-4;David Rossi;IT;SMB
+1;Alice;FR;Retail
+2;Bob;DE;Retail
+3;Clara;FR;Enterprise
+4;David;ES;Enterprise

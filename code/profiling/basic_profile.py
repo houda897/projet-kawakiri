@@ -1,20 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import datetime
+from dataclasses import dataclass
 
-from core.client import CH_DB, META_DB
-from core.meta import ensure_meta_schema
+from core.clickhouse_manager import CH_DB, META_DB
+from core.logger import get_logger
+from core.meta import clear_computed_metadata, clear_metadata_table, ensure_meta_schema
 from core.schema import Col, list_columns, list_tables, q_ident
+from stats.stats_computing import compute_column_stats
+
+logger = get_logger(__name__)
 
 
 @dataclass
 class ColumnProfile:
     """
-    Profil statistique d'une colonne ClickHouse.
+    Statistical profile of a ClickHouse column.
 
-    Stocke les métriques de complétude, cardinalité, unicité et valeurs
-    limites utilisées par les étapes d'inférence aval (détection de clés,
-    séparation faits/dimensions).
+    Stores completeness, cardinality, uniqueness, and boundary metrics used
+    by downstream inference steps (key detection, fact/dimension separation).
     """
 
     database_name: str
@@ -32,12 +36,23 @@ class ColumnProfile:
 
 
 class ProfileEngine:
-    def __init__(self, client):
-        self.client = client
+    """
+    Compute and store basic column profiles for all tables in the configured database.
+
+    A profile captures completeness, cardinality, uniqueness, and value range for
+    each column. These metrics feed the identifiability scoring and primary-key
+    inference steps.
+    """
+
+    def __init__(self, db):
+        self.db = db
 
     def compute_basic_profile_for_column(self, table: str, col: Col) -> ColumnProfile:
         """
-        Compute the core profiling metrics for one ClickHouse column.
+        Run a single SQL query to collect row counts, null counts, distinct counts,
+        and boundary values for one column.
+
+        All ratios are rounded to 6 decimal places before being returned.
         """
         table_ref = f"{q_ident(CH_DB)}.{q_ident(table)}"
         col_ref = q_ident(col.name)
@@ -54,7 +69,8 @@ class ProfileEngine:
           if(non_null_rows = 0, '', toString(max({col_ref}))) AS max_value
         FROM {table_ref}
         """
-        row = self.client.query(sql).result_rows[0]
+
+        row = self.db.query(sql).result_rows[0]
 
         return ColumnProfile(
             database_name=CH_DB,
@@ -73,7 +89,10 @@ class ProfileEngine:
 
     def insert_column_profiles(self, profiles: list[ColumnProfile]) -> None:
         """
-        Persist computed column profiles in the metadata database.
+        Persist a batch of column profiles into the metadata table.
+
+        Does nothing if the list is empty, so callers do not need to guard
+        against empty batches.
         """
         if not profiles:
             return
@@ -96,7 +115,7 @@ class ProfileEngine:
             for profile in profiles
         ]
 
-        self.client.insert(
+        self.db.insert(
             f"{META_DB}.column_profiles",
             rows,
             column_names=[
@@ -115,27 +134,51 @@ class ProfileEngine:
             ],
         )
 
-    def profile_database(self) -> list[ColumnProfile]:
+    def profile_database(
+        self,
+        tables: list[str] | None = None,
+        clear_existing: bool = True,
+        clear_all_computed: bool = True,
+    ) -> list[ColumnProfile]:
         """
-        Profile all regular columns in the configured ClickHouse database.
+        Profile regular columns in the configured ClickHouse database.
         """
-        ensure_meta_schema(self.client)
+
+        ensure_meta_schema(self.db)
+
+        if clear_existing and clear_all_computed:
+            clear_computed_metadata(self.db)
+        elif clear_existing:
+            clear_metadata_table(self.db, "column_profiles")
+            clear_metadata_table(self.db, "column_stats")
+            clear_metadata_table(self.db, "identifiability_scores")
 
         profiles = []
+        run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tables_to_profile = tables if tables is not None else list_tables(self.db)
 
-        for table in list_tables(self.client):
-            for col in list_columns(self.client, table):
+        for table in tables_to_profile:
+            for col in list_columns(self.db, table):
                 if col.name.startswith("__"):
                     continue
 
                 profiles.append(self.compute_basic_profile_for_column(table, col))
 
+                try:
+                    compute_column_stats(
+                        db=self.db,
+                        run_ts=run_ts,
+                        database=CH_DB,
+                        table=table,
+                        col=col,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to compute advanced stats for %s.%s: %s",
+                        table,
+                        col.name,
+                        exc,
+                    )
+
         self.insert_column_profiles(profiles)
         return profiles
-
-
-def profiles_to_dicts(profiles: list[ColumnProfile]) -> list[dict]:
-    """
-    Convert profile objects to dictionaries for tests or serialization.
-    """
-    return [asdict(profile) for profile in profiles]

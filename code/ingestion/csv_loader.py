@@ -1,25 +1,30 @@
 from __future__ import annotations
 
+import codecs
 import csv
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any, Literal
 
-from clickhouse_connect.driver import Client
-from core.client import CH_DB, META_DB
+from config.scoring import INGESTION_SETTINGS
+from core.clickhouse_manager import CH_DB, META_DB, ClickHouseManager
 from core.logger import get_logger
 from core.meta import ensure_meta_schema
-from core.schema import q_ident
+from core.schema import normalize_clickhouse_type, q_ident
 
 logger = get_logger(__name__)
 
-NULL_TOKENS = {"", "null", "none", "nan", "na", "n/a"}
 DELIMITERS = [",", ";", "\t"]
 BATCH_SIZE = 10_000
+GENERIC_DATA_FOLDER_NAMES = {"data", "dataset", "datasets", "csv", "raw"}
 
 
 @dataclass
 class DetectedColumn:
+    """Column detected from a CSV file before it is created in ClickHouse."""
+
     name: str
     detected_type: str
     nullable: bool
@@ -27,6 +32,8 @@ class DetectedColumn:
 
 @dataclass
 class IngestionResult:
+    """Summary of one CSV import attempt."""
+
     source_path: str
     target_database: str
     target_table: str
@@ -35,370 +42,115 @@ class IngestionResult:
     column_count: int
     status: str
     error_message: str
+    skipped_dirty_rows: int = 0
 
 
-def detect_delimiter(path: Path) -> str:
-    sample = path.read_text(encoding="utf-8-sig", errors="ignore")[:8192]
-    try:
-        return csv.Sniffer().sniff(sample, delimiters="".join(DELIMITERS)).delimiter
-    except csv.Error:
-        return max(DELIMITERS, key=sample.count)
+@dataclass
+class SampleCheck:
+    """Small pre-import check used to detect obvious parsing or typing problems."""
 
-
-def check_malformed_row(row: dict, path: Path, line_number: int, delimiter: str) -> None:
-    if row.get(None):
-        raise ValueError(
-            f"CSV mal formé dans {path}, ligne {line_number}: colonnes en trop. "
-            f"Si une décimale utilise '{delimiter}', mets la valeur entre guillemets "
-            f"ou utilise un autre séparateur."
-        )
-
-
-def clean_identifier(value: str | None) -> str:
-    text = (value or "").strip()
-    cleaned = ""
-
-    for char in text:
-        if char.isalnum() or char == "_":
-            cleaned += char
-        else:
-            cleaned += "_"
-
-    cleaned = "_".join(part for part in cleaned.split("_") if part)
-
-    if not cleaned:
-        cleaned = "column"
-
-    if cleaned[0].isdigit():
-        cleaned = "col_" + cleaned
-
-    return cleaned
-
-
-def dedupe_names(names: list[str]) -> list[str]:
-    seen = {}
-    result = []
-
-    for name in names:
-        count = seen.get(name, 0)
-        seen[name] = count + 1
-
-        if count == 0:
-            result.append(name)
-        else:
-            result.append(f"{name}_{count + 1}")
-
-    return result
-
-
-def clean_value(value: str | None):
-    if value is None:
-        return None
-
-    value = value.strip()
-
-    if value.lower() in NULL_TOKENS:
-        return None
-
-    return value
-
-
-def _parse_date(value: str) -> date:
-    formats = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"]
-
-    for fmt in formats:
-        try:
-            if fmt == "%Y-%m-%d":
-                return date.fromisoformat(value)
-            return datetime.strptime(value, fmt).date()
-        except ValueError:
-            pass
-
-    raise ValueError(f"Invalid Date value: {value}")
-
-
-def _parse_datetime(value: str) -> datetime:
-    formats = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-        "%d/%m/%Y %H:%M:%S",
-    ]
-
-    for fmt in formats:
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            pass
-
-    raise ValueError(f"Invalid DateTime value: {value}")
-
-
-def is_int(value: str) -> bool:
-    try:
-        int(value)
-        return "." not in value and "," not in value
-    except ValueError:
-        return False
-
-
-def is_float(value: str) -> bool:
-    try:
-        float(value.replace(",", "."))
-        return True
-    except ValueError:
-        return False
-
-
-def is_date(value: str) -> bool:
-    try:
-        _parse_date(value)
-        return True
-    except ValueError:
-        return False
-
-
-def is_datetime(value: str) -> bool:
-    try:
-        _parse_datetime(value)
-        return True
-    except ValueError:
-        return False
-
-
-def cast_value(value: str | None, column: DetectedColumn, line_number: int):
-    value = clean_value(value)
-
-    if value is None:
-        if not column.nullable:
-            raise ValueError(
-                f"Valeur NULL interdite ligne {line_number}, "
-                f"colonne '{column.name}' de type {column.detected_type}"
-            )
-        return None
-
-    base_type = column.detected_type.replace("Nullable(", "").replace(")", "")
-
-    try:
-        if base_type == "Int64":
-            return int(value)
-
-        if base_type == "Float64":
-            return float(value.replace(",", "."))
-
-        if base_type == "Date":
-            return _parse_date(value)
-
-        if base_type == "DateTime":
-            return _parse_datetime(value)
-
-        return value
-
-    except ValueError as exc:
-        raise ValueError(
-            f"Cast impossible ligne {line_number}, colonne '{column.name}', "
-            f"valeur '{value}' vers {base_type}"
-        ) from exc
-
-
-def infer_column_types(headers: list[str], rows: list[dict]) -> list[DetectedColumn]:
-    columns = []
-
-    for header in headers:
-        values = [clean_value(row.get(header)) for row in rows]
-        present_values = [value for value in values if value is not None]
-
-        nullable = len(present_values) < len(values)
-        column_type = _detect_type(present_values)
-
-        if nullable:
-            column_type = f"Nullable({column_type})"
-
-        columns.append(
-            DetectedColumn(
-                name=header,
-                detected_type=column_type,
-                nullable=nullable,
-            )
-        )
-
-    return columns
-
-
-def _detect_type(values: list[str]) -> str:
-    if not values:
-        return "String"
-
-    if all(is_int(value) for value in values):
-        return "Int64"
-
-    if all(is_datetime(value) for value in values):
-        return "DateTime"
-
-    if all(is_date(value) for value in values):
-        return "Date"
-
-    if all(is_float(value) for value in values):
-        return "Float64"
-
-    return "String"
-
-
-def validate_first_rows_before_import(
-    path: Path,
-    delimiter: str,
-    columns: list[DetectedColumn],
-    row_limit: int = 5,
-) -> dict:
-    checked_rows = 0
-
-    try:
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = reader.fieldnames or []
-
-            for line_number, row in enumerate(reader, start=2):
-                if checked_rows >= row_limit:
-                    break
-
-                check_malformed_row(row, path, line_number, delimiter)
-
-                for index, column in enumerate(columns):
-                    value = row.get(original_headers[index])
-                    cast_value(value, column, line_number)
-
-                checked_rows += 1
-
-        return {
-            "sample_rows_checked": checked_rows,
-            "needs_human_review": False,
-            "review_reason": "",
-        }
-
-    except (ValueError, TypeError, KeyError) as exc:
-        return {
-            "sample_rows_checked": checked_rows,
-            "needs_human_review": True,
-            "review_reason": str(exc),
-        }
-
-
-def build_create_table_sql(database: str, table: str, columns: list[DetectedColumn]) -> str:
-    column_lines = []
-
-    for column in columns:
-        column_lines.append(f"    {q_ident(column.name)} {column.detected_type}")
-
-    columns_sql = ",\n".join(column_lines)
-
-    return f"""
-CREATE TABLE IF NOT EXISTS {q_ident(database)}.{q_ident(table)}
-(
-{columns_sql}
-)
-ENGINE = MergeTree
-ORDER BY tuple()
-"""
+    sample_rows_checked: int
+    needs_human_review: bool
+    review_reason: str
 
 
 class CsvIngestionEngine:
-    def __init__(self, client: Client):
-        self.client = client
+    """
+    Import CSV files into ClickHouse and keep simple ingestion metadata.
+    """
+
+    def __init__(self, db: ClickHouseManager):
+        self.db = db
+        self._encoding_cache: dict[tuple[str, int, int], str] = {}
 
     def import_csv_to_clickhouse(
         self,
         csv_path: str | Path,
         table_name: str | None = None,
         database: str = CH_DB,
-        sample_size: int = 5000,
+        sample_size: int | None = None,
+        if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> dict:
         path = Path(csv_path)
-        table = table_name or self._clean_identifier(path.stem)
+        table = table_name or self.clean_identifier(path.stem)
 
         delimiter = ","
         columns: list[DetectedColumn] = []
         row_count = 0
-        sample_check = {
-            "sample_rows_checked": 0,
-            "needs_human_review": False,
-            "review_reason": "",
-        }
+        skipped_dirty_rows = 0
+        sample_check = SampleCheck(0, False, "")
 
         try:
-            ensure_meta_schema(self.client)
+            ensure_meta_schema(self.db)
 
-            delimiter = self._detect_delimiter(path)
-            headers, sample_rows = self._read_csv_sample(path, delimiter, sample_size)
-            columns = self._infer_column_types(headers, sample_rows)
+            delimiter = self.detect_delimiter(path)
+            headers, sample_rows = self.read_csv_sample(path, delimiter, sample_size)
+            columns = self.infer_column_types(headers, sample_rows)
+            sample_check = self.validate_first_rows_before_import(path, delimiter, columns)
 
-            sample_check = self._validate_first_rows_before_import(path, delimiter, columns)
-
-            if sample_check["needs_human_review"]:
-                result = IngestionResult(
-                    source_path=str(path),
-                    target_database=database,
-                    target_table=table,
-                    detected_delimiter=delimiter,
+            if sample_check.needs_human_review:
+                result = self.build_result(
+                    path=path,
+                    database=database,
+                    table=table,
+                    delimiter=delimiter,
                     row_count=0,
                     column_count=len(columns),
                     status="needs_human_review",
-                    error_message=sample_check["review_reason"],
+                    error_message=sample_check.review_reason,
                 )
-
-                self._log_ingestion_result(result)
-                self._log_detected_columns(result, columns)
-                self._log_ingestion_source(result, sample_check)
-
-                logger.warning(f"Import bloqué : intervention humaine requise pour {path}")
-                logger.warning(sample_check["review_reason"])
+                self.log_import_metadata(result, columns, sample_check)
+                logger.warning("Import blocked for human review: %s", path)
                 return asdict(result)
 
-            self._create_database(database)
-            self._create_table(database, table, columns)
+            self.create_database(database)
+            self.prepare_table(database, table, columns, if_exists)
+            row_count, skipped_dirty_rows = self.insert_csv_rows(
+                path,
+                database,
+                table,
+                columns,
+                delimiter,
+            )
 
-            row_count = self._insert_csv_rows(path, database, table, columns, delimiter)
-
-            result = IngestionResult(
-                source_path=str(path),
-                target_database=database,
-                target_table=table,
-                detected_delimiter=delimiter,
+            result = self.build_result(
+                path=path,
+                database=database,
+                table=table,
+                delimiter=delimiter,
                 row_count=row_count,
                 column_count=len(columns),
                 status="success",
                 error_message="",
+                skipped_dirty_rows=skipped_dirty_rows,
             )
 
         except Exception as exc:
-            result = IngestionResult(
-                source_path=str(path),
-                target_database=database,
-                target_table=table,
-                detected_delimiter=delimiter,
+            result = self.build_result(
+                path=path,
+                database=database,
+                table=table,
+                delimiter=delimiter,
                 row_count=row_count,
                 column_count=len(columns),
                 status="failed",
                 error_message=str(exc),
+                skipped_dirty_rows=skipped_dirty_rows,
             )
-
-            self._log_ingestion_result(result)
-            if columns:
-                self._log_detected_columns(result, columns)
-            self._log_ingestion_source(result, sample_check)
-            logger.error(f"Erreur lors de l'import de {path}: {exc}", exc_info=True)
+            self.log_import_metadata(result, columns, sample_check)
+            logger.error("CSV import failed for %s: %s", path, exc)
             raise
 
-        self._log_ingestion_result(result)
-        self._log_detected_columns(result, columns)
-        self._log_ingestion_source(result, sample_check)
-
-        logger.info(f"CSV importé avec succès : {row_count} lignes dans {database}.{table}")
+        self.log_import_metadata(result, columns, sample_check)
+        logger.info("CSV imported: %s rows into %s.%s", row_count, database, table)
         return asdict(result)
 
     def import_csv_folder_to_clickhouse(
         self,
         folder_path: str | Path,
         database: str = CH_DB,
-        sample_size: int = 5000,
+        sample_size: int | None = None,
+        if_exists: Literal["replace", "append", "fail"] = "replace",
     ) -> list[dict]:
         folder = Path(folder_path)
 
@@ -409,60 +161,115 @@ class CsvIngestionEngine:
             raise NotADirectoryError(f"Expected a folder, got: {folder}")
 
         results = []
+        imported_tables: set[str] = set()
 
-        for csv_file in sorted(folder.glob("*.csv")):
-            result = self.import_csv_to_clickhouse(
-                csv_path=csv_file,
-                table_name=None,
-                database=database,
-                sample_size=sample_size,
+        for csv_file in sorted(folder.rglob("*.csv")):
+            table_name = self.table_name_from_folder_file(folder, csv_file)
+            import_mode = if_exists if table_name not in imported_tables else "append"
+
+            results.append(
+                self.import_csv_to_clickhouse(
+                    csv_path=csv_file,
+                    table_name=table_name,
+                    database=database,
+                    sample_size=sample_size,
+                    if_exists=import_mode,
+                )
             )
-            results.append(result)
+            imported_tables.add(table_name)
 
         return results
 
-    def _detect_delimiter(self, path: Path) -> str:
-        sample = path.read_text(encoding="utf-8-sig", errors="ignore")[:8192]
+    def detect_delimiter(self, path: Path) -> str:
+        encoding = self.detect_encoding(path)
+        with path.open("r", encoding=encoding, newline="") as file:
+            sample = file.read(8192)
+
         try:
             return csv.Sniffer().sniff(sample, delimiters="".join(DELIMITERS)).delimiter
         except csv.Error:
-            return max(DELIMITERS, key=sample.count)
+            return self.guess_delimiter_from_rows(sample)
 
-    def _read_csv_sample(
-        self, path: Path, delimiter: str, sample_size: int
-    ) -> tuple[list[str], list[dict]]:
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file, delimiter=delimiter)
+    def detect_encoding(self, path: Path) -> str:
+        """Detect common CSV encodings without silently dropping invalid bytes."""
+        stat = path.stat()
+        cache_key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+        cached_encoding = self._encoding_cache.get(cache_key)
 
-            original_headers = reader.fieldnames or []
-            headers = self._dedupe_names(
-                [self._clean_identifier(name) for name in original_headers]
-            )
+        if cached_encoding is not None:
+            return cached_encoding
 
-            rows = []
-            for index, row in enumerate(reader):
-                if index >= sample_size:
-                    break
+        with path.open("rb") as file:
+            prefix = file.read(4)
 
-                self._check_malformed_row(row, path, index + 2, delimiter)
+        bom_encodings = (
+            (codecs.BOM_UTF32_LE, "utf-32"),
+            (codecs.BOM_UTF32_BE, "utf-32"),
+            (codecs.BOM_UTF8, "utf-8-sig"),
+            (codecs.BOM_UTF16_LE, "utf-16"),
+            (codecs.BOM_UTF16_BE, "utf-16"),
+        )
+        encoding = next(
+            (name for bom, name in bom_encodings if prefix.startswith(bom)),
+            None,
+        )
 
-                clean_row = {}
-                for i, original_name in enumerate(original_headers):
-                    clean_row[headers[i]] = row.get(original_name)
+        if encoding is None:
+            if self.can_decode(path, "utf-8"):
+                encoding = "utf-8-sig"
+            elif self.can_decode(path, "cp1252"):
+                encoding = "cp1252"
+            else:
+                encoding = "latin-1"
 
-                rows.append(clean_row)
+        self._encoding_cache.clear()
+        self._encoding_cache[cache_key] = encoding
+        return encoding
+
+    @staticmethod
+    def can_decode(path: Path, encoding: str) -> bool:
+        decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+
+        try:
+            with path.open("rb") as file:
+                while chunk := file.read(64 * 1024):
+                    decoder.decode(chunk, final=False)
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            return False
+
+        return True
+
+    def read_csv_sample(
+        self,
+        path: Path,
+        delimiter: str,
+        sample_size: int | None,
+    ) -> tuple[list[str], list[dict[str, str | None]]]:
+        original_headers = self.read_original_headers(path, delimiter)
+        headers = self.dedupe_names([self.clean_identifier(header) for header in original_headers])
+
+        rows = []
+        for _, row_data in self.iter_clean_csv_rows(path, delimiter, headers):
+            if sample_size is not None and len(rows) >= sample_size:
+                break
+
+            rows.append(row_data)
 
         return headers, rows
 
-    def _infer_column_types(self, headers: list[str], rows: list[dict]) -> list[DetectedColumn]:
+    def infer_column_types(
+        self,
+        headers: list[str],
+        rows: list[dict[str, str | None]],
+    ) -> list[DetectedColumn]:
         columns = []
 
         for header in headers:
-            values = [self._clean_value(row.get(header)) for row in rows]
+            values = [self.clean_value(row.get(header)) for row in rows]
             present_values = [value for value in values if value is not None]
-
             nullable = len(present_values) < len(values)
-            column_type = self._detect_type(present_values)
+            column_type = self.detect_type(present_values)
 
             if nullable:
                 column_type = f"Nullable({column_type})"
@@ -477,79 +284,107 @@ class CsvIngestionEngine:
 
         return columns
 
-    def _detect_type(self, values: list[str]) -> str:
+    def detect_type(self, values: list[str]) -> str:
         if not values:
             return "String"
 
-        if all(self._is_int(value) for value in values):
+        if INGESTION_SETTINGS["INFER_TEMPORAL_TYPES"]:
+            if all(self.is_datetime(value) for value in values):
+                return "DateTime64(0)"
+
+            if all(self.is_date(value) for value in values):
+                return "Date32"
+
+        if all(self.is_int(value) for value in values):
             return "Int64"
 
-        if all(self._is_datetime(value) for value in values):
-            return "DateTime"
-
-        if all(self._is_date(value) for value in values):
-            return "Date"
-
-        if all(self._is_float(value) for value in values):
+        if all(self.is_float(value) for value in values):
             return "Float64"
 
         return "String"
 
-    def _validate_first_rows_before_import(
+    def validate_first_rows_before_import(
         self,
         path: Path,
         delimiter: str,
         columns: list[DetectedColumn],
         row_limit: int = 5,
-    ) -> dict:
+    ) -> SampleCheck:
         checked_rows = 0
+        column_names = [column.name for column in columns]
 
         try:
-            with path.open("r", encoding="utf-8-sig", newline="") as file:
-                reader = csv.DictReader(file, delimiter=delimiter)
-                original_headers = reader.fieldnames or []
+            for line_number, row_data in self.iter_clean_csv_rows(path, delimiter, column_names):
+                if checked_rows >= row_limit:
+                    break
 
-                for line_number, row in enumerate(reader, start=2):
-                    if checked_rows >= row_limit:
-                        break
+                for column in columns:
+                    self.cast_value(row_data[column.name], column, line_number)
 
-                    self._check_malformed_row(row, path, line_number, delimiter)
+                checked_rows += 1
 
-                    for index, column in enumerate(columns):
-                        value = row.get(original_headers[index])
-                        self._cast_value(value, column, line_number)
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            return SampleCheck(
+                sample_rows_checked=checked_rows,
+                needs_human_review=True,
+                review_reason=str(exc),
+            )
 
-                    checked_rows += 1
+        return SampleCheck(
+            sample_rows_checked=checked_rows,
+            needs_human_review=False,
+            review_reason="",
+        )
 
-            return {
-                "sample_rows_checked": checked_rows,
-                "needs_human_review": False,
-                "review_reason": "",
-            }
+    def create_database(self, database: str) -> None:
+        self.db.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(database)}")
 
-        except (ValueError, TypeError, KeyError) as exc:
-            return {
-                "sample_rows_checked": checked_rows,
-                "needs_human_review": True,
-                "review_reason": str(exc),
-            }
-
-    def _create_database(self, database: str) -> None:
-        self.client.command(f"CREATE DATABASE IF NOT EXISTS {q_ident(database)}")
-
-    def _create_table(self, database: str, table: str, columns: list[DetectedColumn]) -> None:
+    def prepare_table(
+        self,
+        database: str,
+        table: str,
+        columns: list[DetectedColumn],
+        if_exists: Literal["replace", "append", "fail"],
+    ) -> None:
         if not columns:
-            raise ValueError(f"Impossible de créer la table '{table}' : aucune colonne détectée.")
-        self.client.command(self._build_create_table_sql(database, table, columns))
+            raise ValueError(f"Cannot create table '{table}': no columns were detected.")
 
-    def _build_create_table_sql(
-        self, database: str, table: str, columns: list[DetectedColumn]
+        if if_exists not in {"replace", "append", "fail"}:
+            raise ValueError("if_exists must be one of: replace, append, fail")
+
+        exists = self.table_exists(database, table)
+
+        if exists and if_exists == "fail":
+            raise ValueError(
+                f"Table {database}.{table} already exists. "
+                "Use if_exists='replace' or if_exists='append'."
+            )
+
+        if exists and if_exists == "replace":
+            self.db.command(f"DROP TABLE {q_ident(database)}.{q_ident(table)}")
+
+        self.db.command(self.build_create_table_sql(database, table, columns))
+
+    def table_exists(self, database: str, table: str) -> bool:
+        sql = """
+        SELECT count()
+        FROM system.tables
+        WHERE database = %(database)s
+          AND name = %(table)s
+        """
+        row = self.db.query(
+            sql,
+            parameters={"database": database, "table": table},
+        ).result_rows[0]
+        return row[0] > 0
+
+    def build_create_table_sql(
+        self,
+        database: str,
+        table: str,
+        columns: list[DetectedColumn],
     ) -> str:
-        column_lines = []
-
-        for column in columns:
-            column_lines.append(f"    {q_ident(column.name)} {column.detected_type}")
-
+        column_lines = [f"    {q_ident(column.name)} {column.detected_type}" for column in columns]
         columns_sql = ",\n".join(column_lines)
 
         return f"""
@@ -561,48 +396,147 @@ ENGINE = MergeTree
 ORDER BY tuple()
 """
 
-    def _insert_csv_rows(
+    def insert_csv_rows(
         self,
         path: Path,
         database: str,
         table: str,
         columns: list[DetectedColumn],
         delimiter: str,
-    ) -> int:
+    ) -> tuple[int, int]:
+        """
+        Insert CSV rows in batches.
+
+        Inserts are not transactional: if a later batch fails, earlier batches
+        are already stored. Use if_exists="replace" for full reloads.
+        """
         column_names = [column.name for column in columns]
         total_rows = 0
-        batch: list[list] = []
+        skipped_dirty_rows = 0
+        batch: list[list[Any]] = []
 
-        with path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file, delimiter=delimiter)
-            original_headers = reader.fieldnames or []
+        for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+            if self.is_dirty_row(row_data):
+                skipped_dirty_rows += 1
+                continue
 
-            for line_number, row in enumerate(reader, start=2):
-                self._check_malformed_row(row, path, line_number, delimiter)
+            batch.append(
+                [self.cast_value(row_data[column.name], column, line_number) for column in columns]
+            )
 
-                batch.append(
-                    [
-                        self._cast_value(
-                            row.get(original_headers[index]), columns[index], line_number
-                        )
-                        for index in range(len(columns))
-                    ]
-                )
-
-                if len(batch) >= BATCH_SIZE:
-                    self.client.insert(f"{database}.{table}", batch, column_names=column_names)
-                    total_rows += len(batch)
-                    batch = []
+            if len(batch) >= BATCH_SIZE:
+                self.insert_batch(database, table, batch, column_names)
+                total_rows += len(batch)
+                batch = []
 
         if batch:
-            self.client.insert(f"{database}.{table}", batch, column_names=column_names)
+            self.insert_batch(database, table, batch, column_names)
             total_rows += len(batch)
 
-        return total_rows
+        return total_rows, skipped_dirty_rows
 
-    def _log_ingestion_result(self, result: IngestionResult) -> None:
-        self.client.insert(
-            f"{META_DB}.ingestion_runs",
+    def insert_batch(
+        self,
+        database: str,
+        table: str,
+        batch: list[list[Any]],
+        column_names: list[str],
+    ) -> None:
+        self.db.insert(
+            f"{q_ident(database)}.{q_ident(table)}",
+            batch,
+            column_names=column_names,
+        )
+
+    def iter_csv_rows(
+        self,
+        path: Path,
+        delimiter: str,
+        column_names: list[str],
+    ) -> Iterator[tuple[int, dict[str, str | None]]]:
+        with path.open("r", encoding=self.detect_encoding(path), newline="") as file:
+            reader = csv.DictReader(file, delimiter=delimiter)
+            original_headers = list(reader.fieldnames or [])
+
+            if not original_headers:
+                raise ValueError(f"CSV file has no header: {path}")
+
+            if len(original_headers) < len(column_names):
+                raise ValueError(f"CSV file has fewer columns than expected: {path}")
+
+            for line_number, row in enumerate(reader, start=2):
+                self.check_malformed_row(row, path, line_number, delimiter)
+                yield (
+                    line_number,
+                    {
+                        column_names[index]: row.get(original_headers[index])
+                        for index in range(len(column_names))
+                    },
+                )
+
+    def iter_clean_csv_rows(
+        self,
+        path: Path,
+        delimiter: str,
+        column_names: list[str],
+    ) -> Iterator[tuple[int, dict[str, str | None]]]:
+        for line_number, row_data in self.iter_csv_rows(path, delimiter, column_names):
+            if not self.is_dirty_row(row_data):
+                yield line_number, row_data
+
+    def read_original_headers(self, path: Path, delimiter: str) -> list[str]:
+        with path.open("r", encoding=self.detect_encoding(path), newline="") as file:
+            reader = csv.DictReader(file, delimiter=delimiter)
+            headers = list(reader.fieldnames or [])
+
+        if not headers:
+            raise ValueError(f"CSV file has no header: {path}")
+
+        return headers
+
+    @staticmethod
+    def guess_delimiter_from_rows(sample: str) -> str:
+        lines = [line for line in sample.splitlines() if line.strip()]
+
+        if not lines:
+            return ","
+
+        best_delimiter = ","
+        best_score = (-1, -1)
+
+        for delimiter in DELIMITERS:
+            column_counts = [
+                len(next(csv.reader([line], delimiter=delimiter))) for line in lines[:10]
+            ]
+            common_count = max(set(column_counts), key=column_counts.count)
+            stable_lines = column_counts.count(common_count)
+
+            if common_count <= 1:
+                continue
+
+            score = (stable_lines, common_count)
+            if score > best_score:
+                best_score = score
+                best_delimiter = delimiter
+
+        return best_delimiter
+
+    def log_import_metadata(
+        self,
+        result: IngestionResult,
+        columns: list[DetectedColumn],
+        sample_check: SampleCheck,
+    ) -> None:
+        try:
+            self.log_ingestion_result(result)
+            self.log_detected_columns(result, columns)
+            self.log_ingestion_source(result, sample_check)
+        except Exception as exc:
+            logger.warning("Metadata logging failed for %s: %s", result.source_path, exc)
+
+    def log_ingestion_result(self, result: IngestionResult) -> None:
+        self.insert_metadata_rows(
+            "ingestion_runs",
             [
                 [
                     result.source_path,
@@ -610,6 +544,7 @@ ORDER BY tuple()
                     result.target_table,
                     result.detected_delimiter,
                     result.row_count,
+                    result.skipped_dirty_rows,
                     result.column_count,
                     result.status,
                     result.error_message,
@@ -621,31 +556,34 @@ ORDER BY tuple()
                 "target_table",
                 "detected_delimiter",
                 "row_count",
+                "skipped_dirty_rows",
                 "column_count",
                 "status",
                 "error_message",
             ],
         )
 
-    def _log_detected_columns(
+    def log_detected_columns(
         self,
         result: IngestionResult,
         columns: list[DetectedColumn],
     ) -> None:
-        rows = []
-        for column in columns:
-            rows.append(
-                [
-                    result.target_database,
-                    result.target_table,
-                    column.name,
-                    column.detected_type,
-                    column.nullable,
-                ]
-            )
+        if not columns:
+            return
 
-        self.client.insert(
-            f"{META_DB}.detected_columns",
+        rows = [
+            [
+                result.target_database,
+                result.target_table,
+                column.name,
+                column.detected_type,
+                column.nullable,
+            ]
+            for column in columns
+        ]
+
+        self.insert_metadata_rows(
+            "detected_columns",
             rows,
             column_names=[
                 "target_database",
@@ -656,18 +594,22 @@ ORDER BY tuple()
             ],
         )
 
-    def _log_ingestion_source(self, result: IngestionResult, sample_check: dict) -> None:
-        self.client.insert(
-            f"{META_DB}.ingestion_sources",
+    def log_ingestion_source(
+        self,
+        result: IngestionResult,
+        sample_check: SampleCheck,
+    ) -> None:
+        self.insert_metadata_rows(
+            "ingestion_sources",
             [
                 [
                     result.source_path,
                     result.target_database,
                     result.target_table,
                     result.detected_delimiter,
-                    sample_check["sample_rows_checked"],
-                    sample_check["needs_human_review"],
-                    sample_check["review_reason"],
+                    sample_check.sample_rows_checked,
+                    sample_check.needs_human_review,
+                    sample_check.review_reason,
                 ]
             ],
             column_names=[
@@ -681,23 +623,107 @@ ORDER BY tuple()
             ],
         )
 
-    def _check_malformed_row(self, row: dict, path: Path, line_number: int, delimiter: str) -> None:
+    def insert_metadata_rows(
+        self,
+        table_name: str,
+        rows: list[list[Any]],
+        column_names: list[str],
+    ) -> None:
+        self.db.insert(
+            f"{META_DB}.{table_name}",
+            rows,
+            column_names=column_names,
+        )
+
+    @staticmethod
+    def build_result(
+        path: Path,
+        database: str,
+        table: str,
+        delimiter: str,
+        row_count: int,
+        column_count: int,
+        status: str,
+        error_message: str,
+        skipped_dirty_rows: int = 0,
+    ) -> IngestionResult:
+        return IngestionResult(
+            source_path=str(path),
+            target_database=database,
+            target_table=table,
+            detected_delimiter=delimiter,
+            row_count=row_count,
+            column_count=column_count,
+            status=status,
+            error_message=error_message,
+            skipped_dirty_rows=skipped_dirty_rows,
+        )
+
+    @classmethod
+    def table_name_from_folder_file(cls, folder: Path, csv_file: Path) -> str:
+        relative_path = csv_file.relative_to(folder)
+        table_source_name = csv_file.stem
+
+        if len(relative_path.parts) > 1 and relative_path.parts[0].lower() not in (
+            GENERIC_DATA_FOLDER_NAMES
+        ):
+            table_source_name = relative_path.parts[0]
+
+        return cls.clean_identifier(table_source_name)
+
+    @staticmethod
+    def check_malformed_row(
+        row: dict,
+        path: Path,
+        line_number: int,
+        delimiter: str,
+    ) -> None:
         if row.get(None):
             raise ValueError(
-                f"CSV mal formé dans {path}, ligne {line_number}: colonnes en trop. "
-                f"Si une décimale utilise '{delimiter}', mets la valeur entre guillemets "
-                f"ou utilise un autre séparateur."
+                f"Malformed CSV row in {path}, line {line_number}: extra columns detected. "
+                f"If decimal values use '{delimiter}', quote them or use another delimiter."
             )
 
-    def _clean_identifier(self, value: str | None) -> str:
+    @staticmethod
+    def is_dirty_row(row_dict: dict[str, str | None]) -> bool:
+        if not row_dict:
+            return True
+
+        values = [
+            value.strip()
+            for value in row_dict.values()
+            if value is not None and value.strip() != ""
+        ]
+
+        if not values:
+            return True
+
+        metadata_prefixes = (
+            "export date",
+            "exported",
+            "source",
+            "generated",
+            "report",
+        )
+
+        if all(set(value) <= {"-"} for value in values):
+            return True
+
+        if len(values) == 1:
+            value_clean = values[0].lower()
+
+            if value_clean.startswith(metadata_prefixes):
+                return True
+
+        return False
+
+    @staticmethod
+    def clean_identifier(value: str | None) -> str:
         text = (value or "").strip()
         cleaned = ""
 
         for char in text:
-            if char.isalnum() or char == "_":
-                cleaned += char
-            else:
-                cleaned += "_"
+            cleaned += char if char.isalnum() or char == "_" else "_"
 
         cleaned = "_".join(part for part in cleaned.split("_") if part)
 
@@ -705,48 +731,54 @@ ORDER BY tuple()
             cleaned = "column"
 
         if cleaned[0].isdigit():
-            cleaned = "col_" + cleaned
+            cleaned = f"col_{cleaned}"
 
         return cleaned
 
-    def _dedupe_names(self, names: list[str]) -> list[str]:
+    @staticmethod
+    def dedupe_names(names: list[str]) -> list[str]:
         seen = {}
         result = []
 
         for name in names:
             count = seen.get(name, 0)
             seen[name] = count + 1
-
-            if count == 0:
-                result.append(name)
-            else:
-                result.append(f"{name}_{count + 1}")
+            result.append(name if count == 0 else f"{name}_{count + 1}")
 
         return result
 
-    def _clean_value(self, value: str | None):
+    @staticmethod
+    def clean_value(value: str | None) -> str | None:
         if value is None:
             return None
 
         value = value.strip()
-
-        if value.lower() in NULL_TOKENS:
+        if value.lower() in CsvIngestionEngine.null_tokens():
             return None
 
         return value
 
-    def _cast_value(self, value: str | None, column: DetectedColumn, line_number: int):
-        value = self._clean_value(value)
+    @staticmethod
+    def null_tokens() -> set[str]:
+        return {str(token).lower() for token in INGESTION_SETTINGS["NULL_TOKENS"]}
+
+    def cast_value(
+        self,
+        value: str | None,
+        column: DetectedColumn,
+        line_number: int,
+    ) -> Any:
+        value = self.clean_value(value)
 
         if value is None:
             if not column.nullable:
                 raise ValueError(
-                    f"Valeur NULL interdite ligne {line_number}, "
-                    f"colonne '{column.name}' de type {column.detected_type}"
+                    f"NULL value is not allowed at line {line_number}, "
+                    f"column '{column.name}' with type {column.detected_type}"
                 )
             return None
 
-        base_type = column.detected_type.replace("Nullable(", "").replace(")", "")
+        base_type = self.base_type(column.detected_type)
 
         try:
             if base_type == "Int64":
@@ -755,72 +787,80 @@ ORDER BY tuple()
             if base_type == "Float64":
                 return float(value.replace(",", "."))
 
-            if base_type == "Date":
-                return self._parse_date(value)
+            if base_type in ("Date", "Date32"):
+                return self.parse_date(value)
 
-            if base_type == "DateTime":
-                return self._parse_datetime(value)
+            if base_type.startswith("DateTime"):
+                return self.parse_datetime(value)
 
             return value
 
         except ValueError as exc:
             raise ValueError(
-                f"Cast impossible ligne {line_number}, colonne '{column.name}', "
-                f"valeur '{value}' vers {base_type}"
+                f"Cannot cast line {line_number}, column '{column.name}', "
+                f"value '{value}' to {base_type}"
             ) from exc
 
-    def _is_int(self, value: str) -> bool:
+    @staticmethod
+    def base_type(clickhouse_type: str) -> str:
+        return normalize_clickhouse_type(clickhouse_type)
+
+    @staticmethod
+    def is_int(value: str) -> bool:
         try:
             int(value)
             return "." not in value and "," not in value
         except ValueError:
             return False
 
-    def _is_float(self, value: str) -> bool:
+    @staticmethod
+    def is_float(value: str) -> bool:
         try:
             float(value.replace(",", "."))
             return True
         except ValueError:
             return False
 
-    def _is_date(self, value: str) -> bool:
+    def is_date(self, value: str) -> bool:
         try:
-            self._parse_date(value)
+            self.parse_date(value)
             return True
         except ValueError:
             return False
 
-    def _is_datetime(self, value: str) -> bool:
+    def is_datetime(self, value: str) -> bool:
         try:
-            self._parse_datetime(value)
+            self.parse_datetime(value)
             return True
         except ValueError:
             return False
 
-    def _parse_date(self, value: str) -> date:
-        formats = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"]
+    @staticmethod
+    def parse_date(value: str) -> date:
+        return CsvIngestionEngine.parse_temporal_value(
+            value,
+            INGESTION_SETTINGS["DATE_FORMATS"],
+            "Date",
+        ).date()
 
-        for fmt in formats:
-            try:
-                if fmt == "%Y-%m-%d":
-                    return date.fromisoformat(value)
-                return datetime.strptime(value, fmt).date()
-            except ValueError:
-                pass
+    @staticmethod
+    def parse_datetime(value: str) -> datetime:
+        return CsvIngestionEngine.parse_temporal_value(
+            value,
+            INGESTION_SETTINGS["DATETIME_FORMATS"],
+            "DateTime",
+        )
 
-        raise ValueError(f"Invalid Date value: {value}")
-
-    def _parse_datetime(self, value: str) -> datetime:
-        formats = [
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%dT%H:%M:%S",
-            "%d/%m/%Y %H:%M:%S",
-        ]
-
+    @staticmethod
+    def parse_temporal_value(
+        value: str,
+        formats: Sequence[str],
+        type_name: str,
+    ) -> datetime:
         for fmt in formats:
             try:
                 return datetime.strptime(value, fmt)
             except ValueError:
                 pass
 
-        raise ValueError(f"Invalid DateTime value: {value}")
+        raise ValueError(f"Invalid {type_name} value: {value}")

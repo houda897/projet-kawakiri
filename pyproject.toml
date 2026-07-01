@@ -5,16 +5,44 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kawakiri"
 version = "0.1.0"
-description = "Librairie Open Source de Reverse Engineering et Data Science de Structure"
+description = "Open-source reverse-engineering library for decision model inference"
 authors = [
     {name = "AMSE & Koushin"}
 ]
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
+keywords = [
+    "reverse-engineering",
+    "decision-modeling",
+    "data-profiling",
+    "clickhouse",
+    "dimensional-modeling",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
     "clickhouse-connect",
+    "colorama",
+    "rapidfuzz",
     "python-dotenv",
 ]
+
+[project.urls]
+Repository = "https://github.com/houda897/projet-kawakiri"
+
+[project.scripts]
+kawakiri = "main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -33,6 +61,7 @@ include = '\.pyi?$'
 
 [tool.setuptools]
 package-dir = {"" = "code"}
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["code"]
