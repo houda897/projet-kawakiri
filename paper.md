@@ -11,25 +11,21 @@ tags:
 authors:
   - name: Nour el houda Ramdane
     orcid: 0009-0006-8682-0270
-    affiliation: 1
+    affiliation: 2
   - name: Maxime Berger
     orcid: 0009-0007-4170-8872
-    affiliation: 2
+    affiliation: 1
   - name: Mickaël Martin Nevot
     orcid: 0009-0004-7893-3449
-    affiliation: 3
+    affiliation: 1
   - name: Anthony Tinson
     orcid: 0009-0005-2639-9990
-    affiliation: 4
+    affiliation: 2
 affiliations:
   - name: "KOUSHIN, Marseille, France"
     index: 1
   - name: "Aix-Marseille School of Economics (AMSE) CRNS UMR 7316, Aix-Marseille Université, Marseille, France"
     index: 2
-  - name: "Aix-Marseille School of Economics (AMSE) CRNS UMR 7316, Aix-Marseille Université, Marseille, France"
-    index: 3
-  - name: "KOUSHIN, Marseille, France"
-    index: 4
 date: 19 June 2026
 bibliography: paper.bib
 ---
