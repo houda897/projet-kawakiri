@@ -5,9 +5,9 @@
 ![Status](https://img.shields.io/badge/status-alpha-orange.svg)
 
 Kawakiri is an open-source reverse-engineering library that reconstructs candidate
-dimensional models from undocumented CSV sources. It combines ClickHouse profiling,
+dimensional models from undocumented CSV sources. Using ClickHouse profiling,
 functional dependencies, key and join inference, graph analysis, and explicit
-validation rules to produce auditable star, snowflake, or constellation candidates.
+validation rules, it produce auditable star, snowflake, or constellation candidates.
 
 Kawakiri is an alpha research prototype. Its certification establishes that a model
 passes the implemented structural and statistical checks; it does not replace domain
