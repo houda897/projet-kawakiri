@@ -26,13 +26,6 @@ affiliations:
     index: 1
   - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
     index: 2
-<<<<<<< HEAD
-=======
-  - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
-    index: 3
-  - name: "KOUSHIN, Marseille, France"
-    index: 4
->>>>>>> f90647a (refactor: remove Climate/Ocean tutorial and update documentation links)
 date: 19 June 2026
 bibliography: paper.bib
 ---
