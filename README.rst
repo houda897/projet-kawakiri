@@ -477,7 +477,7 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 
 Academic citation metadata is provided in `CITATION.cff <CITATION.cff>`__. The JOSS paper sources are available in `paper.md <paper.md>`__ and `paper.bib <paper.bib>`__.
 
-Guidelines for contributing to the project (code, documentation, bug fixes, feature requests) are described in the [CONTRIBUTING](CONTRIBUTING.md) file.
+Guidelines for contributing to the project (code, documentation, bug fixes, feature requests) are described in the `CONTRIBUTING <CONTRIBUTING.md>`__ file.
 
 👥 Contributors
 ---------------
