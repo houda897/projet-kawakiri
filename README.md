@@ -3,15 +3,20 @@
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![ClickHouse](https://img.shields.io/badge/ClickHouse-required-yellow.svg)
 ![Status](https://img.shields.io/badge/status-alpha-orange.svg)
+![Zenodo](https://img.shields.io/badge/DOI-Zenodo-red.svg)
+![JOSS](https://img.shields.io/badge/JOSS-!!!VERSION!!!-lgreen.svg)
 
-Kawakiri is an open-source reverse-engineering library that reconstructs candidate
-dimensional models from undocumented CSV sources. Using ClickHouse profiling,
-functional dependencies, key and join inference, graph analysis, and explicit
-validation rules, it produce auditable star, snowflake, or constellation candidates.
+Kawakiri is an open-source platform that extracts decision-making models and reconstructs candidate dimensional deterministic models from various undocumented sources. Using column-based database profiling, functional dependencies, key and join inference, graph topology analysis, and explicit validation rules, Kawakiri generates auditable snowflake, star, or constellation models.
 
-Kawakiri is an alpha research prototype. While its certification establishes that a model
-passes the implemented structural and statistical checks; it does not replace domain
-review or prove that the inferred model is the only possible business interpretation.
+### Features
+
+- automated dimensional modeling
+- rule-based schema inference
+- data profiling
+- functional dependency discovery
+- column-oriented data analysis
+- axiom-based model synthesis
+- database reverse engineering
 
 ## What the pipeline does
 
@@ -191,10 +196,35 @@ Preview it locally with `mkdocs serve`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the documentation site for further details.
 
+## Project Structure
+
+```
+Kawakiri
+  └── code
+  |     └── config
+  |     └── core
+  |     └── data
+  |     └── generation
+  |     └── inference
+  |     └── modeling
+  |     └── profiling
+  |     └── reporting
+  |     └── semantic
+  |     └── stats
+  |     └── validation
+  |     └── main.py
+  └── docs
+  └── tests   
+```
+
 ## Citation
 
 Academic citation metadata is provided in [CITATION.cff](CITATION.cff). The JOSS paper
 sources are available in [paper.md](paper.md) and [paper.bib](paper.bib).
+
+## Contributors
+
+See the [AUTHORS](AUTHORS.rst) file for a complete list of contributors to the project.
 
 ## License
 
