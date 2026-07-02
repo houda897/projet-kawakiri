@@ -21,6 +21,8 @@ nav:
   - Installation Guide: installation.md
   - Usage Guide: usage.md
   - Architecture: architecture.md
+  - Validation Rules: RULES.md
+  - Scoring System: scoring_system.md
   - Reproducibility: reproducibility.md
   - Tutorials:
       - Climate and Ocean: tutorials/climate-ocean.md
