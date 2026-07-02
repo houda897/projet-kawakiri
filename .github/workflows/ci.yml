@@ -28,10 +28,21 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Check formatting
-        run: ruff format --check code tests
+        run: ruff format --check code tests examples
+
+      - name: Check installation script syntax
+        run: bash -n install.sh
 
       - name: Lint
-        run: ruff check code tests
+        run: ruff check code tests examples
 
       - name: Run unit tests with coverage
         run: pytest -m "not integration" --cov=code --cov-report=term-missing
+
+      - name: Build documentation
+        if: matrix.python-version == '3.13'
+        run: mkdocs build --strict
+
+      - name: Build Python distributions
+        if: matrix.python-version == '3.13'
+        run: python -m build

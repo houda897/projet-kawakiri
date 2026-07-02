@@ -5,12 +5,15 @@ contributions should keep the code simple, reproducible, and easy to explain.
 
 ## Development Setup
 
-Follow the installation and configuration instructions in the `README.md`, then install
+Follow the installation and configuration instructions in the `README.rst`, then install
 the optional development dependencies:
 
 ```bash
-pip install -e ".[dev]"
+./install.sh --dev
 ```
+
+On Windows, use `install.bat --dev`. Manual installation with
+`python -m pip install -e ".[dev]"` remains supported.
 
 Do not commit `.env`, generated reports, local datasets, or cache files.
 
@@ -39,15 +42,15 @@ chore/code-quality-cleanup
 Before opening a pull request, run:
 
 ```bash
-ruff check code tests
-ruff format --check code tests
+ruff check code tests examples
+ruff format --check code tests examples
 pytest -q
 ```
 
 To apply formatting:
 
 ```bash
-ruff format code tests
+ruff format code tests examples
 ```
 
 The project favors:
@@ -79,6 +82,9 @@ Each pull request should include:
 - a short summary of the change;
 - the tests or commands that were run;
 - any known limitation or follow-up.
+
+User-visible changes should also be added to the `Unreleased` section of
+`CHANGELOG.md`.
 
 Keep pull requests focused. Documentation, validation logic, SQL generation, and
 packaging changes should ideally be separated when they are large.

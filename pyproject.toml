@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,8 +9,9 @@ description = "Open-source reverse-engineering library for decision model infere
 authors = [
     {name = "AMSE & Koushin"}
 ]
-readme = "README.md"
-license = {file = "LICENSE"}
+readme = "README.rst"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 keywords = [
     "reverse-engineering",
@@ -22,7 +23,6 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -40,12 +40,16 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/houda897/projet-kawakiri"
+Documentation = "https://github.com/houda897/projet-kawakiri/tree/main/docs"
+Issues = "https://github.com/houda897/projet-kawakiri/issues"
+Changelog = "https://github.com/houda897/projet-kawakiri/blob/main/CHANGELOG.md"
 
 [project.scripts]
 kawakiri = "main:main"
 
 [project.optional-dependencies]
 dev = [
+    "build",
     "pytest",
     "pytest-cov",
     "black",
