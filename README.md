@@ -9,14 +9,14 @@ dimensional models from undocumented CSV sources. Using ClickHouse profiling,
 functional dependencies, key and join inference, graph analysis, and explicit
 validation rules, it produce auditable star, snowflake, or constellation candidates.
 
-Kawakiri is an alpha research prototype. Its certification establishes that a model
+Kawakiri is an alpha research prototype. While its certification establishes that a model
 passes the implemented structural and statistical checks; it does not replace domain
 review or prove that the inferred model is the only possible business interpretation.
 
 ## What the pipeline does
 
 ```text
-CSV ingestion
+CSV ingestion:
 -> raw column profiling and statistics
 -> identifiability scoring
 -> preliminary source keys and relationships
@@ -31,16 +31,16 @@ CSV ingestion
 -> SQL views, JSON report, and Mermaid schema
 ```
 
-Functional groups are based on verified dependencies. A group may be extended only
-when its current columns functionally determine an unassigned column. Columns without
-such evidence remain singletons in the grouping metadata; they are not silently added
-to a dimension. Referenced, already-normalized sources are kept as coherent entities,
+Functional groups are based on verified dependencies. A group can only be extended
+when its current columns determine an unassigned column. Columns without
+such evidence remain singletons in the grouping metadata and are not silently added
+to a dimension. Referenced, normalized sources are kept as coherent entities,
 while groups extracted from flat tables must demonstrate repeated determinant values
-and a real compression gain.
+and real compression gains.
 
 ## Validation rules
 
-Kawakiri currently checks:
+Kawakiri currently checks the following:
 
 - key uniqueness, completeness, and normalized Shannon entropy;
 - referential integrity and orphan values;
@@ -66,15 +66,28 @@ Kawakiri currently checks:
 
 Computed evidence is stored in a dedicated ClickHouse metadata database.
 
-## Installation
+## Requirements
 
-Requirements:
-
+- Internet connection;
+- Git installed;
 - Python 3.10 or later;
 - a reachable ClickHouse server.
 
+## Installation
+
 ```bash
-python3 -m venv .venv
+pyt
+Repository navigation
+Code
+Issues
+Pull requests
+Actions
+Projects
+Wiki
+Security and quality
+Insights
+Settings
+hon3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
