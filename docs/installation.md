@@ -8,6 +8,35 @@
 
 ## Install the project
 
+Clone the repository:
+
+```bash
+git clone https://github.com/houda897/projet-kawakiri.git
+cd projet-kawakiri
+```
+
+### Automated installation
+
+On Linux and macOS:
+
+```bash
+chmod +x install.sh
+./install.sh
+source .venv/bin/activate
+```
+
+On Windows Command Prompt:
+
+```bat
+install.bat
+.venv\Scripts\activate
+```
+
+Use `--dev` to install test, lint, coverage, and documentation dependencies. Existing
+`.env` files are never overwritten by the scripts.
+
+### Manual installation
+
 From the repository root:
 
 ```bash
@@ -22,7 +51,11 @@ directly with `python code/main.py`.
 
 ## Configure ClickHouse
 
-Create a `.env` file at the repository root:
+Copy `.env.example` to `.env`, then edit the ClickHouse connection:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 CH_HOST=127.0.0.1
@@ -70,6 +103,9 @@ python code/main.py run-all path/to/csv-folder --report certification-report.jso
 ```
 
 Use `--skip-sql-views` when only the certification artifacts are required.
+
+See the [usage guide](usage.md) for the external-project CLI example and individual
+pipeline stages.
 
 ## CSV behavior
 

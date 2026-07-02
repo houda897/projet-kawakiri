@@ -1,8 +1,7 @@
-# Référence de l'API Python
+# Référence technique de Kawakiri
 
-Cette page décrit les classes réellement utilisées par le pipeline en ligne de
-commande. Kawakiri est principalement exécuté par la CLI, mais les moteurs peuvent être
-appelés directement pour les tests ou une orchestration personnalisée.
+Cette page décrit les classes utilisées en interne par le pipeline en ligne de commande.
+Elle est destinée aux tests, à la maintenance et aux contributeurs du projet.
 
 Tous les moteurs accédant à ClickHouse reçoivent une instance de
 `ClickHouseManager`.
@@ -163,7 +162,7 @@ du groupe et la propriété `all_columns`.
 - `write_mermaid_schema(path, report=None)` : écrit le schéma Mermaid.
 - `build_best_model_schema(report=None)` : produit une représentation textuelle lisible.
 
-## Limites de l'API
+## Erreurs et garanties
 
 Les moteurs lèvent généralement `ValueError` ou `RuntimeError` lorsqu'une étape
 précédente n'a produit aucune métadonnée. Un statut certifié atteste le respect des

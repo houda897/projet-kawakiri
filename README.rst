@@ -105,18 +105,33 @@ Clone the repository first:
    git clone https://github.com/houda897/projet-kawakiri.git
    cd projet-kawakiri
 
-Linux
-~~~~~
+Automated installation
+~~~~~~~~~~~~~~~~~~~~~~
+
+On Linux and macOS:
 
 .. code:: bash
 
-   python3 -m venv .venv
+   chmod +x install.sh
+   ./install.sh
    source .venv/bin/activate
-   python -m pip install --upgrade pip
-   python -m pip install -e .
 
-macOS
-~~~~~
+On Windows Command Prompt:
+
+.. code:: bat
+
+   install.bat
+   .venv\Scripts\activate
+
+Pass ``--dev`` to either installation script to include test, lint, coverage, and
+documentation dependencies. The scripts create ``.env`` from ``.env.example`` only
+when no local configuration exists.
+
+Manual installation
+~~~~~~~~~~~~~~~~~~~
+
+Linux and macOS
+^^^^^^^^^^^^^^^
 
 .. code:: bash
 
@@ -126,7 +141,7 @@ macOS
    python -m pip install -e .
 
 Windows (PowerShell)
-~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^
 
 .. code:: powershell
 
@@ -164,9 +179,11 @@ Create ``.env`` at the repository root. On Linux and macOS, copy and run:
    CH_USER=default
    META_DB=lab_meta
    CH_PASSWORD=
-
-When using the native ClickHouse server instead of the Docker command above, set ``CH_PORT=8123``. For a remote deployment, replace the host, port, user, and password with the values supplied by its administrator.
    EOF
+
+When using the native ClickHouse server instead of the Docker command above, set
+``CH_PORT=8123``. For a remote deployment, replace the host, port, user, and password
+with the values supplied by its administrator.
 
 On Windows PowerShell, copy and run:
 
@@ -181,17 +198,6 @@ On Windows PowerShell, copy and run:
    CH_PASSWORD=
    '@ | Set-Content .env
 
-The resulting file contains:
-
-.. code:: env
-
-   CH_HOST=localhost
-   CH_PORT=11123
-   CH_DATABASE=lab_db
-   CH_USER=default
-   META_DB=lab_meta
-   CH_PASSWORD=
-
 The data and metadata databases are created when the pipeline initializes its schemas. Confirm that ClickHouse is reachable before continuing:
 
 .. code:: bash
@@ -204,20 +210,30 @@ On Windows PowerShell, use:
 
    Invoke-WebRequest http://localhost:11123/ping
 
-🚀 Quick start
---------------
+🚀 Minimal working example
+--------------------------
 
-The repository contains a small multi-table example in ``code/data``. After starting ClickHouse, this command runs the complete pipeline without requiring additional data:
+The repository contains a small multi-table example in ``code/data``. Once the installation and ClickHouse configuration above are complete, copy and run:
 
 .. code:: bash
 
-   kawakiri run-all code/data --report report.json
+   kawakiri run-all code/data --report example-report.json
+   ls -lh example-report.json example-report.mmd
+
+On Windows PowerShell, use:
+
+.. code:: powershell
+
+   kawakiri run-all code/data --report example-report.json
+   Get-Item example-report.json, example-report.mmd
 
 The command produces:
 
--  ``report.json``: certification results and model coverage;
--  ``report.mmd``: Mermaid representation of the inferred model;
+-  ``example-report.json``: certification results and model coverage;
+-  ``example-report.mmd``: Mermaid representation of the inferred model;
 -  ClickHouse SQL views for the best certified model, unless ``--skip-sql-views`` is used.
+
+This is the smallest complete execution of Kawakiri: it ingests the example CSV files, profiles their columns, reconstructs logical fact and dimension candidates, infers keys and joins, validates the candidate schemas, and exports the final artifacts.
 
 📊 Understanding the results
 --------------------------
@@ -265,6 +281,60 @@ Installation creates the ``kawakiri`` command. The same pipeline can also be sta
 .. code:: bash
 
    python code/main.py run-all code/data --report report.json
+
+Call Kawakiri from another project
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Kawakiri is operated through its command-line interface. The example
+``examples/external_project_main.py`` shows how another Python project can execute the
+CLI and detect execution failures. A minimal ``main.py`` can be written as follows:
+
+.. code:: python
+
+   from pathlib import Path
+   import subprocess
+
+
+   def run_kawakiri(csv_folder: Path, report: Path) -> None:
+       """Execute Kawakiri through its supported command-line interface."""
+       report.parent.mkdir(parents=True, exist_ok=True)
+       subprocess.run(
+           [
+               "kawakiri",
+               "run-all",
+               str(csv_folder),
+               "--report",
+               str(report),
+           ],
+           check=True,
+       )
+
+
+   def main() -> None:
+       run_kawakiri(
+           csv_folder=Path("data/csv"),
+           report=Path("output/kawakiri-report.json"),
+       )
+
+
+   if __name__ == "__main__":
+       main()
+
+Save the file in the external project, place the source CSV files in ``data/csv``,
+activate the environment where Kawakiri is installed, then run:
+
+.. code:: bash
+
+   python main.py
+
+The complete reusable version remains available in
+``examples/external_project_main.py`` and accepts paths as command-line arguments:
+
+.. code:: bash
+
+   python examples/external_project_main.py path/to/csv-folder --report output/model.json
+
+See the `usage guide <docs/usage.md>`__ for integration details.
 
 Display the available commands
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -361,6 +431,17 @@ Preview it locally with ``mkdocs serve``.
 
 See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/index.md>`__ for further details.
 
+🤝 Community and project policies
+---------------------------------
+
+-  `Contribution guide <CONTRIBUTING.md>`__
+-  `Support policy <SUPPORT.md>`__
+-  `Security policy <SECURITY.md>`__
+-  `Governance <GOVERNANCE.md>`__
+-  `Changelog <CHANGELOG.md>`__
+-  `Reproducibility guide <docs/reproducibility.md>`__
+-  `Release and JOSS checklist <docs/release-checklist.md>`__
+
 🗂️ Project structure
 --------------------
 
@@ -381,7 +462,10 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
    │   ├── semantic/     Complementary semantic analysis
    │   └── main.py       Command-line interface
    ├── docs/             Documentation and tutorials
+   ├── examples/         External CLI integration examples
    ├── tests/            Unit and integration tests
+   ├── install.sh        Linux and macOS installer
+   ├── install.bat       Windows installer
    ├── pyproject.toml    Python package configuration
    ├── paper.md          JOSS paper
    ├── LICENSE           MIT license

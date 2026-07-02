@@ -1,8 +1,7 @@
-# Python API Reference
+# Kawakiri Technical Reference
 
-This page documents the public engine classes and the methods used by the command-line
-pipeline. Kawakiri is currently optimized for CLI execution; these classes remain
-usable for tests and custom orchestration.
+This page documents the engine classes and methods used internally by the command-line
+pipeline. It is intended for tests, maintenance, and project contributors.
 
 All engines that access ClickHouse receive a `ClickHouseManager` instance.
 
