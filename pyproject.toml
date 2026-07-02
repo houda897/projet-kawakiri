@@ -9,7 +9,7 @@ description = "Open-source reverse-engineering library for decision model infere
 authors = [
     {name = "AMSE & Koushin"}
 ]
-readme = "README.md"
+readme = "README.rst"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 keywords = [

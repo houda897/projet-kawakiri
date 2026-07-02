@@ -5,7 +5,7 @@ contributions should keep the code simple, reproducible, and easy to explain.
 
 ## Development Setup
 
-Follow the installation and configuration instructions in the `README.md`, then install
+Follow the installation and configuration instructions in the `README.rst`, then install
 the optional development dependencies:
 
 ```bash
