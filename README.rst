@@ -446,7 +446,7 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 --------------------
 
 ::
-
+```
    Kawakiri/
 ├── code/
 │   ├── config/
@@ -463,6 +463,7 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 │   └── main.py
 ├── docs/
 └── tests/
+```
 
 📚 Citation
 -----------
