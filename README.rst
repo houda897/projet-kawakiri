@@ -445,7 +445,7 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 🗂️ Project structure
 --------------------
 
-```
+.. code:: bash
    Kawakiri/
 ├── code/
 │   ├── config/
@@ -462,7 +462,7 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 │   └── main.py
 ├── docs/
 └── tests/
-```
+.. code:: bash
 
 
 📚 Citation
