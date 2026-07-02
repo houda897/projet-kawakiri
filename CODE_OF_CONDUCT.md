@@ -1,4 +1,4 @@
-# Code of Conduct - SkyRank: a unified toolkit for Skyline ranking, benchmarking and visualization
+# Code of Conduct - Kawakiri: automated dimensional schema inference via rule-based data profiling
 
 ## Our Pledge
 
