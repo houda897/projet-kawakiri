@@ -491,7 +491,7 @@ Kawakiri is distributed under the `MIT License <LICENSE>`__.
 
 .. |Python Version| image:: https://img.shields.io/badge/python-3.10%2B-blue.svg
 .. |ClickHouse| image:: https://img.shields.io/badge/ClickHouse-required-yellow.svg
-.. |Status| image:: https://img.shields.io/badge/status-alpha-orange.svg
+.. |Status| image:: https://img.shields.io/badge/status-beta-orange.svg
 .. |CI| image:: https://github.com/houda897/projet-kawakiri/actions/workflows/ci.yml/badge.svg
    :target: https://github.com/houda897/projet-kawakiri/actions/workflows/ci.yml
    :alt: Continuous integration status
