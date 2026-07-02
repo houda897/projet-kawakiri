@@ -38,7 +38,7 @@ When given a folder containing undocumented tabular data sources, such as raw CS
 
 # Statement of need
 
-Traditionally, designing multidimensional schemas for business intelligence has relied on a comprehensive understanding of source systems. Although automated and semi-automated multidimensional design approaches have been widely studied [@omeroSurveyMultidimensionalModeling2009], they often assume clean, well-documented source schemas or require significant expert intervention.
+Traditionally, designing multidimensional schemas for business intelligence has relied on a comprehensive understanding of source systems. Although automated and semi-automated multidimensional design approaches have been widely studied [@romeroSurveyMultidimensionalModeling2009], they often assume clean, well-documented source schemas or require significant expert intervention.
 
 Teams that specialize in analytics and data engineering often receive tabular extracts, such as CSV dumps from legacy systems, data lake exports, and third-party feeds. These extracts typically lack documentation of primary or foreign keys, as well as the intended fact/dimension roles. Manually building a dimensional model from these sources is time-consuming, and the results are often ambiguous; several relationship graphs can fit the same noisy source tables equally well. Manual modeling does not address this non-identifiability problem systematically.
 
@@ -91,7 +91,7 @@ Since the noise tolerance appropriate for a given source system is domain-depend
 
 ## Data profiling and functional dependencies
 
-Kawakiri closes the gap with rule-based database reverse engineering. It uses column-based data profiling to automatically infer functional and inclusion dependencies. Instead of using non-deterministic heuristic searches, Kawakiri uses an axiom-based synthesis workflow derived from foundational dependency discovery benchmarks [@papenbrock2015].
+Kawakiri closes the gap with rule-based database reverse engineering. It uses column-based data profiling to automatically infer functional and inclusion dependencies. Instead of relying on non-deterministic heuristic searches, Kawakiri uses an axiom-based synthesis workflow grounded in established relational data-profiling and dependency-discovery methods [@abedjanProfilingRelationalData2015].
 
 ## Mathematics and algorithms
 
@@ -105,7 +105,7 @@ Kawakiri does not infer keys, joins, or table roles based solely on column names
 | `identifiability_score` | Combined uniqueness, entropy, and completeness score used to rank primary-key candidates |
 | `variation_coefficient` | Normalized numeric variability; high values can indicate a fact measure |
 
-**Identifiability and semantic classification.** For a column $C$ with distinct values $X = \{x_1, \dots, x_n\}$ and empirical probabilities $P(x_i)$, the engine computes the Shannon entropy $H(C) = -\sum_i P(x_i)\log_2 P(x_i)$ [@shannon1948], normalized as $H_{norm}(C) = H(C) / \log_2(N)$, where $N$ is the row count. Since $H_{norm}(C) \to 1$ only when nearly every value is unique ($n \to N$), this normalization is deliberately stricter than the conventional entropy normalization by $\log_2(n)$: it is designed to identify columns that act as identifiers rather than to measure category diversity in general. Low-entropy columns support a dimension classification, and high-entropy, high-variability numeric columns support a fact classification. Coupled with the coefficient of variation $CV(C) = \sigma/\mu$ for numeric columns (undefined when $\mu = 0$, in which case the column is excluded from variability-based scoring), this classification occurs.
+**Identifiability and semantic classification.** For a column $C$ with distinct values $X = \{x_1, \dots, x_n\}$ and empirical probabilities $P(x_i)$, the engine computes the Shannon entropy $H(C) = -\sum_i P(x_i)\log_2 P(x_i)$ [@shannonMathematicalTheoryCommunication1948], normalized as $H_{norm}(C) = H(C) / \log_2(N)$, where $N$ is the row count. Since $H_{norm}(C) \to 1$ only when nearly every value is unique ($n \to N$), this normalization is deliberately stricter than the conventional entropy normalization by $\log_2(n)$: it is designed to identify columns that act as identifiers rather than to measure category diversity in general. Low-entropy columns support a dimension classification, and high-entropy, high-variability numeric columns support a fact classification. Coupled with the coefficient of variation $CV(C) = \sigma/\mu$ for numeric columns (undefined when $\mu = 0$, in which case the column is excluded from variability-based scoring), this classification occurs.
 
 **Join inference and topology.** A directed edge from a candidate foreign key $C_s$ in table $T_s$ to a candidate primary key $K_t$ in table $T_t$ is accepted when the join success ratio
 
@@ -139,7 +139,7 @@ The Kawakiri method was developed and validated through an end-to-end integratio
 
 # Future work
 
-The final candidate schemas, generated by Kawakiri using star, snowflake, or constellation models, structurally reconstruct the implicit analytical hierarchies embedded within the raw tables. This algorithmic synthesis provides an automated, concrete foundation for advanced analytical frameworks that formalize hierarchical data cubes and multidimensional lattices [@martinnevot2023hierarchical], ensuring that the inferred candidates respect logical constraints before being materialized.
+The final candidate schemas, generated by Kawakiri using star, snowflake, or constellation models, structurally reconstruct the implicit analytical hierarchies embedded within the raw tables. This algorithmic synthesis provides an automated, concrete foundation for advanced analytical frameworks that formalize hierarchical data cubes and multidimensional lattices [@martinnevotHierarchicalDatacubes2023], ensuring that the inferred candidates respect logical constraints before being materialized.
 
 # AI usage disclosure
 
