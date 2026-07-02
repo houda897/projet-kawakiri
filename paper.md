@@ -9,23 +9,28 @@ tags:
   - axiom-based model synthesis
   - database reverse engineering
 authors:
-  - name: Nour el houda Ramdane
+  - given-names: Nour el Houda
+    surname: Ramdane
     orcid: 0009-0006-8682-0270
     affiliation: 2
-  - name: Maxime Berger
+  - given-names: Maxime
+    surname: Berger
     orcid: 0009-0007-4170-8872
     affiliation: 1
-  - name: Mickaël Martin Nevot
+  - given-names: Mickaël
+    surname: Martin Nevot
     orcid: 0009-0004-7893-3449
     affiliation: 1
-  - name: Anthony Tinson
+  - given-names: Anthony
+    surname: Tinson
     orcid: 0009-0005-2639-9990
-    affiliation: 2
+    affiliation: 1
 affiliations:
-  - name: "KOUSHIN, Marseille, France"
-    index: 1
   - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
+    index: 1
+  - name: "KOUSHIN, Marseille, France"
     index: 2
+  
 date: 19 June 2026
 bibliography: paper.bib
 ---
