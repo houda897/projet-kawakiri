@@ -24,8 +24,15 @@ authors:
 affiliations:
   - name: "KOUSHIN, Marseille, France"
     index: 1
-  - name: "Aix-Marseille School of Economics (AMSE) CRNS UMR 7316, Aix-Marseille Université, Marseille, France"
+  - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
     index: 2
+<<<<<<< HEAD
+=======
+  - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
+    index: 3
+  - name: "KOUSHIN, Marseille, France"
+    index: 4
+>>>>>>> f90647a (refactor: remove Climate/Ocean tutorial and update documentation links)
 date: 19 June 2026
 bibliography: paper.bib
 ---
@@ -34,11 +41,11 @@ bibliography: paper.bib
 
 Kawakiri is an open-source platform that extracts decision-making models and reconstructs candidate dimensional deterministic models from various undocumented sources. Using column-based database profiling, functional dependencies, key and join inference, graph topology analysis, and explicit validation rules, Kawakiri generates auditable snowflake, star, or constellation models.
 
-When given a folder containing undocumented tabular data sources, such as raw CSV exports, Kawakiri ingests the data into ClickHouse. It then profiles every column, reconstructs non-overlapping functional column groups, materializes logical tables, infers candidate primary keys and join relationships, classifies logical tables into fact and dimension roles, assembles candidate dimensional-model graphs (snowflake, star or constellation), and validates each candidate against a fixed set of structural rules. Finally, it certifies each candidate in a JSON report. Unlike other tools, which require analysts to declare keys and relationships upfront, Kawakiri derives these elements from statistical evidence in the data itself, such as uniqueness, entropy, null ratios, and aggregation behavior. It only accepts a candidate model once it has passed referential, granularity, semantic, and aggregation-stability checks. The output is a validaded, auditable dimensional model, along with generated SQL views. This is intended to shorten the path from an undocumented data export to a query-ready analytical schema.
+When given a folder containing undocumented tabular data sources, such as raw CSV exports, Kawakiri ingests the data into ClickHouse. It then profiles every column, reconstructs non-overlapping functional column groups, materializes logical tables, infers candidate primary keys and join relationships, classifies logical tables into fact and dimension roles, assembles candidate dimensional-model graphs (snowflake, star or constellation), and validates each candidate against a fixed set of structural rules. Finally, it certifies each candidate in a JSON report. Unlike other tools, which require analysts to declare keys and relationships upfront, Kawakiri derives these elements from statistical evidence in the data itself, such as uniqueness, entropy, null ratios, and aggregation behavior. It only accepts a candidate model once it has passed referential, granularity, semantic, and aggregation-stability checks. The output is a validated, auditable dimensional model, along with generated SQL views. This is intended to shorten the path from an undocumented data export to a query-ready analytical schema.
 
 # Statement of need
 
-Traditionnaly, designing multidimensional schemas for business intelligence traditionally has relied on a comprehensive understanding of source systems. Although automated and semi-automated multidimensional design approaches have been widely studied [@omeroSurveyMultidimensionalModeling2009], they often assume clean, well-documented source schemas or require significant expert intervention.
+Traditionally, designing multidimensional schemas for business intelligence has relied on a comprehensive understanding of source systems. Although automated and semi-automated multidimensional design approaches have been widely studied [@omeroSurveyMultidimensionalModeling2009], they often assume clean, well-documented source schemas or require significant expert intervention.
 
 Teams that specialize in analytics and data engineering often receive tabular extracts, such as CSV dumps from legacy systems, data lake exports, and third-party feeds. These extracts typically lack documentation of primary or foreign keys, as well as the intended fact/dimension roles. Manually building a dimensional model from these sources is time-consuming, and the results are often ambiguous; several relationship graphs can fit the same noisy source tables equally well. Manual modeling does not address this non-identifiability problem systematically.
 
@@ -89,7 +96,7 @@ Since the noise tolerance appropriate for a given source system is domain-depend
 
 # Methodology
 
-## Data prfiling and functional dependencies
+## Data profiling and functional dependencies
 
 Kawakiri closes the gap with rule-based database reverse engineering. It uses column-based data profiling to automatically infer functional and inclusion dependencies. Instead of using non-deterministic heuristic searches, Kawakiri uses an axiom-based synthesis workflow derived from foundational dependency discovery benchmarks [@papenbrock2015].
 
@@ -119,7 +126,7 @@ The accepted edges form an adjacency matrix, $A$, which is checked for cycles vi
 
 ## Validation rules
 
-Currently, five structural rules currently gate certification:
+Currently, five structural rules gate certification:
 
 - **Referential integrity**: fact-to-dimension links should not create orphan values.
 - **Topology**: the join graph must be acyclic, with no self-loops or invalid
@@ -143,7 +150,7 @@ The final candidate schemas, generated by Kawakiri using star, snowflake, or con
 
 # AI usage disclosure
 
-Generative AI assistance was used during the development of this project, specifically Anthropic Claude 3.5 Sonnet and GitHub Copilot. (1) drafting and debugging portions of the pipeline source code, (2) drafting portions of the project documentation, and (3) drafting and revising this paper, including its structure and compliance with JOSS submission requirements. All AI-assisted code was reviewed and validated by the authors before being merged, and no AI-generated code was accepted without this review process. The authors made the core design decisions, including the staged pipeline architecture, the choice of statistical metrics, the set of structural validation rules, and the database separation between analytical and metadata storage.
+Generative AI assistance was used during the development of this project, specifically OpenAI Codex, Anthropic Claude 3.5 Sonnet, and GitHub Copilot: (1) to draft and debug portions of the pipeline source code, (2) to draft portions of the project documentation, and (3) to draft and revise this paper, including its structure and compliance with JOSS submission requirements. All AI-assisted code and text were reviewed and validated by the authors before being merged, and no AI-generated contribution was accepted without this review process. The authors made the core design decisions, including the staged pipeline architecture, the choice of statistical metrics, the set of structural validation rules, and the database separation between analytical and metadata storage.
 
 # Acknowledgements
 

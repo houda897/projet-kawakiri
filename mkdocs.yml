@@ -24,8 +24,6 @@ nav:
   - Validation Rules: RULES.md
   - Scoring System: scoring_system.md
   - Reproducibility: reproducibility.md
-  - Tutorials:
-      - Climate and Ocean: tutorials/climate-ocean.md
   - Technical Reference:
       - English: technical-reference.md
       - Français: technical-reference-fr.md

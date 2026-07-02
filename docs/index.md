@@ -28,10 +28,9 @@ CSV sources
 1. Follow the [installation guide](installation.md).
 2. Follow the [usage guide](usage.md) and run the bundled example.
 3. Read the [technical architecture](architecture.md).
-4. Run the [Climate/Ocean tutorial](tutorials/climate-ocean.md).
-5. Consult the [technical reference](technical-reference.md) or its
+4. Consult the [technical reference](technical-reference.md) or its
    [French version](technical-reference-fr.md).
-6. Use the [reproducibility guide](reproducibility.md) for scientific runs.
+5. Use the [reproducibility guide](reproducibility.md) for scientific runs.
 
 Kawakiri is used through its command-line interface. The technical reference documents
 implementation components for tests and contributors.
