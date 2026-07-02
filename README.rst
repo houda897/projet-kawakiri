@@ -1,12 +1,12 @@
 Kawakiri
 ========
 
-|Python Version| |ClickHouse| |Status| |Zenodo| |JOSS|
+|Python Version| |ClickHouse| |Status| |CI| |Zenodo| |JOSS|
 
-Kawakiri is an open-source platform that deterministically reconstructs candidate dimensional models, composed of fact and dimension tables, from heterogeneous and undocumented data sources. Using column-level data profiling, functional dependency discovery, key and join inference, graph topology analysis, and explicit validation rules, Kawakiri generates auditable star, snowflake, and constellation schemas.
+Kawakiri is an open-source platform that deterministically reconstructs candidate dimensional models, composed of fact and dimension tables, from heterogeneous and undocumented CSV datasets. It executes its analytical workloads in ClickHouse, a column-oriented analytical database like DuckDB. Using column-level data profiling, functional dependency discovery, key and join inference, graph topology analysis, and explicit validation rules, Kawakiri generates auditable star, snowflake, and constellation schemas.
 
-Features
-~~~~~~~~
+✨ Features
+-----------
 
 -  automated dimensional modeling
 -  rule-based schema inference
@@ -16,8 +16,8 @@ Features
 -  axiom-based model synthesis
 -  database reverse engineering
 
-What the pipeline does
-----------------------
+🔄 What the pipeline does
+---------------------------
 
 .. code:: text
 
@@ -37,8 +37,8 @@ What the pipeline does
 
 Functional groups are based on verified dependencies. A group can only be extended when its current columns determine an unassigned column. Columns without such evidence remain singletons in the grouping metadata and are not silently added to a dimension. Referenced, normalized sources are kept as coherent entities, while groups extracted from flat tables must demonstrate repeated determinant values and real compression gains.
 
-Validation rules
-----------------
+✅ Validation rules
+-------------------
 
 Kawakiri currently checks the following:
 
@@ -50,8 +50,8 @@ Kawakiri currently checks the following:
 -  semantic separation between facts and dimensions;
 -  aggregation stability across inferred joins.
 
-Architecture
-------------
+🏗️ Architecture
+----------------
 
 +------------------+--------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------+
 | Layer            | Main classes                                                                         | Responsibility                                                                      |
@@ -77,59 +77,204 @@ Architecture
 
 Computed evidence is stored in a dedicated ClickHouse metadata database.
 
-Requirements
-------------
+📄 Supported inputs
+-------------------
 
--  Internet connection;
--  Git installed;
+The current release accepts CSV files. A folder analysis expects one file per source table and derives the ClickHouse table name from each filename.
+
+-  supported delimiters: comma, semicolon, and tab;
+-  supported encodings: UTF-8, UTF-8 with BOM, UTF-16, UTF-32, Windows-1252, and Latin-1 fallback;
+-  a header row is required;
+-  physical column types are inferred from a sample and checked during import;
+-  delimiters contained inside values must be quoted according to CSV rules.
+
+🧰 Requirements
+---------------
+
 -  Python 3.10 or later;
--  a reachable ClickHouse server.
+-  Git, when installing from the source repository;
+-  access to a ClickHouse server, running through Docker, a native installation, or a remote deployment.
 
-Installation
-------------
+📦 Installation
+---------------
+
+Clone the repository first:
+
+.. code:: bash
+
+   git clone https://github.com/houda897/projet-kawakiri.git
+   cd projet-kawakiri
+
+Linux
+~~~~~
 
 .. code:: bash
 
    python3 -m venv .venv
    source .venv/bin/activate
-   pip install -e ".[dev]"
+   python -m pip install --upgrade pip
+   python -m pip install -e .
 
-Create ``.env`` at the repository root:
+macOS
+~~~~~
+
+.. code:: bash
+
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   python -m pip install -e .
+
+Windows (PowerShell)
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: powershell
+
+   py -3.10 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install --upgrade pip
+   python -m pip install -e .
+
+Start ClickHouse
+~~~~~~~~~~~~~~~~
+
+Docker provides the same setup on Linux, macOS, and Windows:
+
+.. code:: bash
+
+   docker run -d --name kawakiri-clickhouse -p 11123:8123 -p 19000:9000 -e CLICKHOUSE_DB=lab_db clickhouse/clickhouse-server:25.8
+
+On Linux and macOS, ClickHouse also provides a native installer:
+
+.. code:: bash
+
+   curl https://clickhouse.com/ | sh
+   ./clickhouse server
+
+The native server uses HTTP port ``8123`` by default. The Docker command above maps that port to ``11123`` on the host, which matches Kawakiri's default configuration. On Windows, Docker Desktop or ClickHouse under WSL2 is recommended. The Docker image is pinned to the ClickHouse 25.8 LTS release for reproducibility.
+
+Create ``.env`` at the repository root. On Linux and macOS, copy and run:
+
+.. code:: bash
+
+   cat > .env <<'EOF'
+   CH_HOST=localhost
+   CH_PORT=11123
+   CH_DATABASE=lab_db
+   CH_USER=default
+   META_DB=lab_meta
+   CH_PASSWORD=
+
+When using the native ClickHouse server instead of the Docker command above, set ``CH_PORT=8123``. For a remote deployment, replace the host, port, user, and password with the values supplied by its administrator.
+   EOF
+
+On Windows PowerShell, copy and run:
+
+.. code:: powershell
+
+   @'
+   CH_HOST=localhost
+   CH_PORT=11123
+   CH_DATABASE=lab_db
+   CH_USER=default
+   META_DB=lab_meta
+   CH_PASSWORD=
+   '@ | Set-Content .env
+
+The resulting file contains:
 
 .. code:: env
 
    CH_HOST=localhost
-   CH_PORT=your_port
-   CH_DATABASE=your_database
-   CH_USER=your_user
-   META_DB=your_metadata_database
-   CH_PASSWORD=your_password
+   CH_PORT=11123
+   CH_DATABASE=lab_db
+   CH_USER=default
+   META_DB=lab_meta
+   CH_PASSWORD=
 
-The data and metadata databases are created when the pipeline initializes its schemas.
+The data and metadata databases are created when the pipeline initializes its schemas. Confirm that ClickHouse is reachable before continuing:
 
-Quick start
------------
+.. code:: bash
 
-Place one CSV file per source table in a folder, then run:
+   curl http://localhost:11123/ping
+
+On Windows PowerShell, use:
+
+.. code:: powershell
+
+   Invoke-WebRequest http://localhost:11123/ping
+
+🚀 Quick start
+--------------
+
+The repository contains a small multi-table example in ``code/data``. After starting ClickHouse, this command runs the complete pipeline without requiring additional data:
+
+.. code:: bash
+
+   kawakiri run-all code/data --report report.json
+
+The command produces:
+
+-  ``report.json``: certification results and model coverage;
+-  ``report.mmd``: Mermaid representation of the inferred model;
+-  ClickHouse SQL views for the best certified model, unless ``--skip-sql-views`` is used.
+
+📊 Understanding the results
+--------------------------
+
+Each candidate model receives one of three certification statuses:
+
+-  ``VALID``: all required validation rules pass and the model can be used to generate SQL views;
+-  ``WARNING``: the structure remains usable for inspection, but one or more non-blocking issues require review;
+-  ``INVALID``: at least one blocking rule fails, such as an invalid grain, structural inconsistency, or unstable aggregation.
+
+The JSON report records candidate scores, detected fact and dimension tables, validation issues, excluded tables, and model coverage. The Mermaid file provides a readable representation of tables, columns, keys, relationships, and cardinalities. Certification describes the evidence observed in the data; it does not replace validation by a domain expert.
+
+🛠️ Ways to use Kawakiri
+----------------------
+
+Analyze your own CSV folder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Place one CSV file per source table in the same folder. Replace ``path/to/csv-folder`` with the real path, then run:
 
 .. code:: bash
 
    kawakiri run-all path/to/csv-folder --report report.json
 
-The equivalent source-tree command is:
+Use ``--skip-sql-views`` when you only need inference and certification artifacts:
 
 .. code:: bash
 
-   python code/main.py run-all path/to/csv-folder --report report.json
+   kawakiri run-all path/to/csv-folder --report report.json --skip-sql-views
 
-When at least one candidate model passes certification, the command creates:
+Import one CSV file
+~~~~~~~~~~~~~~~~~~~
 
--  ``report.json``: certification results and model coverage;
--  ``report.mmd``: Mermaid ER representation;
--  ClickHouse SQL views for the best certified model, unless ``--skip-sql-views`` is used.
+Use this mode to import and inspect a single source before running other stages manually:
 
-Step-by-step execution
-----------------------
+.. code:: bash
+
+   kawakiri ingest-csv path/to/table.csv --table my_table
+
+Run directly from the source tree
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Installation creates the ``kawakiri`` command. The same pipeline can also be started directly from the cloned repository:
+
+.. code:: bash
+
+   python code/main.py run-all code/data --report report.json
+
+Display the available commands
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   kawakiri --help
+
+🪜 Step-by-step execution
+-------------------------
 
 .. code:: bash
 
@@ -158,14 +303,39 @@ Step-by-step execution
 
 ``score-identifiability`` is intentionally run twice. The first execution evaluates columns from the raw source tables. After logical reconstruction and profiling, the second execution evaluates the columns of the materialized logical tables.
 
-Inspect the available commands with:
+🩹 Troubleshooting
+------------------
+
+ClickHouse connection refused
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Check that the server is running, verify ``CH_HOST`` and ``CH_PORT`` in ``.env``, then call the ``/ping`` endpoint shown in the installation section. Docker uses host port ``11123`` in this guide, while a native ClickHouse server normally uses ``8123``.
+
+Malformed CSV row
+~~~~~~~~~~~~~~~~~
+
+Verify that every row has the same number of fields as the header. Values containing the active delimiter must be enclosed in quotes. Kawakiri accepts commas, semicolons, and tabs as delimiters.
+
+Encoding error
+~~~~~~~~~~~~~~
+
+Kawakiri detects common Unicode encodings, Windows-1252, and Latin-1. If a file still cannot be decoded consistently, convert the complete file to UTF-8 before ingestion instead of replacing individual invalid characters.
+
+No certified model or SQL view
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Open ``report.json`` and inspect the reported validation issues. Kawakiri still exports JSON and Mermaid artifacts when no candidate is fully certified, but it does not create SQL views from an invalid model.
+
+
+
+🧪 Development and tests
+------------------------
+
+Install the development dependencies:
 
 .. code:: bash
 
-   kawakiri --help
-
-Development
------------
+   python -m pip install -e ".[dev]"
 
 Run the unit tests:
 
@@ -189,10 +359,10 @@ Build the documentation with strict link and configuration checks:
 
 Preview it locally with ``mkdocs serve``.
 
-See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the documentation site for further details.
+See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/index.md>`__ for further details.
 
-Project Structure
------------------
+🗂️ Project structure
+--------------------
 
 ::
 
@@ -217,24 +387,27 @@ Project Structure
    ├── LICENSE           MIT license
    └── README.rst        Project overview and usage guide
 
-Citation
---------
+📚 Citation
+-----------
 
 Academic citation metadata is provided in `CITATION.cff <CITATION.cff>`__. The JOSS paper sources are available in `paper.md <paper.md>`__ and `paper.bib <paper.bib>`__.
 
-Contributors
-------------
+👥 Contributors
+---------------
 
 See the `AUTHORS <AUTHORS.rst>`__ file for a complete list of contributors to the project.
 
-License
--------
+⚖️ License
+----------
 
 Kawakiri is distributed under the `MIT License <LICENSE>`__.
 
 .. |Python Version| image:: https://img.shields.io/badge/python-3.10%2B-blue.svg
 .. |ClickHouse| image:: https://img.shields.io/badge/ClickHouse-required-yellow.svg
 .. |Status| image:: https://img.shields.io/badge/status-alpha-orange.svg
+.. |CI| image:: https://github.com/houda897/projet-kawakiri/actions/workflows/ci.yml/badge.svg
+   :target: https://github.com/houda897/projet-kawakiri/actions/workflows/ci.yml
+   :alt: Continuous integration status
 .. |Zenodo| image:: https://img.shields.io/badge/DOI-Zenodo-red.svg
    :target: https://zenodo.org/records/21100022
    :alt: Zenodo dataset DOI
