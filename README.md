@@ -199,28 +199,30 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the documentation site for further de
 ## Project Structure
 
 ```
-Kawakiri
-  └── code
-  |     └── config
-  |     └── core
-  |     └── data
-  |     └── generation
-  |     └── inference
-  |     └── modeling
-  |     └── profiling
-  |     └── reporting
-  |     └── semantic
-  |     └── stats
-  |     └── validation
-  |     └── main.py
-  └── docs
-  └── tests   
+Kawakiri/
+├── code/
+│   ├── config/
+│   ├── core/
+│   ├── data/
+│   ├── generation/
+│   ├── inference/
+│   ├── modeling/
+│   ├── profiling/
+│   ├── reporting/
+│   ├── semantic/
+│   ├── stats/
+│   ├── validation/
+│   └── main.py
+├── docs/
+└── tests/
 ```
 
 ## Citation
 
 Academic citation metadata is provided in [CITATION.cff](CITATION.cff). The JOSS paper
 sources are available in [paper.md](paper.md) and [paper.bib](paper.bib).
+
+Guidelines for contributing to the project (code, documentation, bug fixes, feature requests) are described in the [CONTRIBUTING](CONTRIBUTING.md) file.
 
 ## Contributors
 
