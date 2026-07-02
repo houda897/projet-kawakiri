@@ -445,24 +445,31 @@ See `CONTRIBUTING.md <CONTRIBUTING.md>`__ and the `documentation index <docs/ind
 🗂️ Project structure
 --------------------
 
-.. code:: bash
+::
+
    Kawakiri/
-├── code/
-│   ├── config/
-│   ├── core/
-│   ├── data/
-│   ├── generation/
-│   ├── inference/
-│   ├── modeling/
-│   ├── profiling/
-│   ├── reporting/
-│   ├── semantic/
-│   ├── stats/
-│   ├── validation/
-│   └── main.py
-├── docs/
-└── tests/
-.. code:: bash
+   ├── code/
+   │   ├── config/       Scoring thresholds and configuration
+   │   ├── core/         Shared schemas, metadata and utilities
+   │   ├── ingestion/    Source ingestion into ClickHouse
+   │   ├── profiling/    Statistical column profiling
+   │   ├── stats/        Entropy and functional dependencies
+   │   ├── inference/    Group, key, join and role inference
+   │   ├── modeling/     Fact, dimension and model construction
+   │   ├── validation/   Mathematical and structural validation rules
+   │   ├── generation/   SQL view generation
+   │   ├── reporting/    JSON reports and Mermaid diagrams
+   │   ├── semantic/     Complementary semantic analysis
+   │   └── main.py       Command-line interface
+   ├── docs/             Documentation and tutorials
+   ├── examples/         External CLI integration examples
+   ├── tests/            Unit and integration tests
+   ├── install.sh        Linux and macOS installer
+   ├── install.bat       Windows installer
+   ├── pyproject.toml    Python package configuration
+   ├── paper.md          JOSS paper
+   ├── LICENSE           MIT license
+   └── README.rst        Project overview and usage guide
 
 
 📚 Citation
