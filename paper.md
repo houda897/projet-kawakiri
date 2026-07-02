@@ -24,7 +24,7 @@ authors:
   - given-names: Anthony
     surname: Tinson
     orcid: 0009-0005-2639-9990
-    affiliation: 1
+    affiliation: 2
 affiliations:
   - name: "Aix-Marseille School of Economics (AMSE) CNRS UMR 7316, Aix-Marseille Université, Marseille, France"
     index: 1
