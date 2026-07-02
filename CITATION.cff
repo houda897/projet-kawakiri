@@ -5,22 +5,20 @@ type: software
 authors:
   - name: "Ramdane Nour el houda"
   - name: "Berger Maxime"
+  - name: "Martin Nevot Mickaël"
   - name: "Tinson Anthony"
-  - name: "Martin Nevot mikael"
-  - name: "AMSE"
-  - name: "Koushin"
 version: "0.1.0"
 repository-code: "https://github.com/houda897/projet-kawakiri"
 abstract: >-
-  Kawakiri is an open-source reverse-engineering library for discovering and
-  certifying decision models from undocumented data sources. It combines CSV
-  ingestion, ClickHouse-based profiling, key and join inference, graph topology
-  analysis, fact/dimension classification, model validation, and certification
-  reporting.
+  Kawakiri is an open-source platform that extracts decision-making models and 
+  reconstructs candidate dimensional deterministic models from various undocumented sources. 
+  Using column-based database profiling, functional dependencies, key and join inference, graph topology analysis, 
+  and explicit validation rules, Kawakiri generates auditable snowflake, star, or constellation models.
 keywords:
-  - reverse-engineering
-  - decision-modeling
-  - data-profiling
-  - clickhouse
-  - dimensional-modeling
-  - data-science
+ - automated dimensional modeling
+ - rule-based schema inference
+ - data profiling
+ - functional dependency discovery
+ - column-oriented data analysis
+ - axiom-based model synthesis
+ - database reverse engineering
